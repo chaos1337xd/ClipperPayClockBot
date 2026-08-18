@@ -1,4 +1,10 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Telegram user/chat/message IDs fit within JS's safe integer range, so parse
+// BIGINT (OID 20) as a number instead of pg's default string — otherwise
+// comparisons like `ctx.from.id !== shift.user_id` (number vs string) always
+// fail even when the IDs match.
+types.setTypeParser(20, (val) => parseInt(val, 10));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
