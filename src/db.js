@@ -64,6 +64,13 @@ async function getOpenShiftByUsername(username) {
   return rows[0] || null;
 }
 
+async function updateOpenShiftsChatId(oldChatId, newChatId) {
+  await pool.query(`UPDATE shifts SET chat_id = $1 WHERE chat_id = $2 AND clock_out IS NULL`, [
+    newChatId,
+    oldChatId,
+  ]);
+}
+
 async function getUserShiftHistory(userId, limit) {
   const { rows } = await pool.query(
     `SELECT * FROM shifts WHERE user_id = $1 AND clock_out IS NOT NULL ORDER BY clock_in DESC LIMIT $2`,
@@ -192,6 +199,7 @@ module.exports = {
   getOpenShift,
   getAllOpenShifts,
   getOpenShiftByUsername,
+  updateOpenShiftsChatId,
   getUserShiftHistory,
   getLongRunningUnwarnedShifts,
   markShiftWarned,
