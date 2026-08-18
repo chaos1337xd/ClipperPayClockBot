@@ -60,6 +60,15 @@ async function findOpenShiftForTarget(target) {
   return null;
 }
 
+async function notifyAdmin(text) {
+  if (!ADMIN_ID) return;
+  try {
+    await bot.telegram.sendMessage(ADMIN_ID, text);
+  } catch (e) {
+    console.error('Failed to DM admin', e);
+  }
+}
+
 bot.command('clockin', async (ctx) => {
   const userId = ctx.from.id;
   const existing = await db.getOpenShift(userId);
@@ -71,6 +80,9 @@ bot.command('clockin', async (ctx) => {
   await ctx.reply(
     `✅ ${displayNameOf(ctx.from)} clocked in. Status checks every ${scheduler.CHECKIN_INTERVAL_MS / 60000} min — tap the button when prompted.`
   );
+  if (userId !== ADMIN_ID) {
+    await notifyAdmin(`✅ ${displayNameOf(ctx.from)} clocked in (${fmtLocal(shift.clock_in)}).`);
+  }
 });
 
 bot.command('clockout', async (ctx) => {
@@ -84,6 +96,9 @@ bot.command('clockout', async (ctx) => {
   const closed = await db.closeShift(shift.id);
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
   await ctx.reply(`🛑 ${displayNameOf(ctx.from)} clocked out. Shift length: ${formatDuration(seconds)}.`);
+  if (userId !== ADMIN_ID) {
+    await notifyAdmin(`🛑 ${displayNameOf(ctx.from)} clocked out. Shift length: ${formatDuration(seconds)}.`);
+  }
 });
 
 bot.command('forceclockout', async (ctx) => {
