@@ -1,0 +1,19 @@
+{
+  "name": "clipper-payclock",
+  "version": "1.0.0",
+  "description": "Telegram payclock bot for clipper shifts with periodic status checks and admin daily reports",
+  "main": "src/bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "pg": "^8.13.1",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  }
+}
