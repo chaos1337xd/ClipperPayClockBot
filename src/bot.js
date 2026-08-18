@@ -180,6 +180,15 @@ async function main() {
     console.log(`Daily report scheduled: "${DAILY_REPORT_CRON}" (${TZ})`);
   }
 
+  await bot.telegram.setMyCommands([
+    { command: 'clockin', description: 'Start your shift' },
+    { command: 'clockout', description: 'End your shift' },
+    { command: 'status', description: 'See your current shift length' },
+    { command: 'whosonshift', description: 'See who is currently clocked in' },
+    { command: 'report', description: 'Admin: get today\'s report on demand' },
+    { command: 'help', description: 'List commands' },
+  ]);
+
   await bot.launch();
   console.log('Bot started.');
 }
