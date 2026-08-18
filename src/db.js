@@ -110,12 +110,20 @@ async function closeShift(shiftId) {
   return rows[0];
 }
 
-async function createCheckin(shiftId, chatId, messageId) {
+async function createCheckin(shiftId, chatId, messageId = null) {
   const { rows } = await pool.query(
     `INSERT INTO checkins (shift_id, chat_id, message_id) VALUES ($1, $2, $3) RETURNING *`,
     [shiftId, chatId, messageId]
   );
   return rows[0];
+}
+
+async function setCheckinMessageId(checkinId, messageId) {
+  await pool.query(`UPDATE checkins SET message_id = $1 WHERE id = $2`, [messageId, checkinId]);
+}
+
+async function updateCheckinChatId(checkinId, chatId) {
+  await pool.query(`UPDATE checkins SET chat_id = $1 WHERE id = $2`, [chatId, checkinId]);
 }
 
 async function getCheckin(checkinId) {
@@ -206,6 +214,8 @@ module.exports = {
   createShift,
   closeShift,
   createCheckin,
+  setCheckinMessageId,
+  updateCheckinChatId,
   getCheckin,
   confirmCheckin,
   expireCheckin,

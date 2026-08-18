@@ -101,6 +101,26 @@ bot.command('clockout', async (ctx) => {
   }
 });
 
+bot.command('checknow', async (ctx) => {
+  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('This command is admin-only.');
+  }
+  const target = resolveTargetFromArgsOrReply(ctx);
+  if (!target) {
+    return ctx.reply('Usage: reply to the clipper\'s message with /checknow, or /checknow @username');
+  }
+  const shift = await findOpenShiftForTarget(target);
+  if (!shift) {
+    return ctx.reply("Couldn't find an active shift for that clipper.");
+  }
+  try {
+    await scheduler.sendCheckin(bot, shift);
+  } catch (e) {
+    console.error('Manual check-in trigger failed', e);
+    await ctx.reply('Failed to send the status check — check the logs.');
+  }
+});
+
 bot.command('forceclockout', async (ctx) => {
   if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
     return ctx.reply('This command is admin-only.');
@@ -196,6 +216,7 @@ bot.command('help', async (ctx) => {
       ADMIN_ID ? '/report — (admin) get an on-demand daily report' : null,
       ADMIN_ID ? '/weeklyreport — (admin) get an on-demand weekly report' : null,
       ADMIN_ID ? '/forceclockout @user — (admin) clock someone out, reply to their message also works' : null,
+      ADMIN_ID ? '/checknow @user — (admin) send an immediate status check, reply to their message also works' : null,
     ]
       .filter(Boolean)
       .join('\n')
@@ -332,6 +353,7 @@ async function main() {
     { command: 'report', description: "Admin: get today's report on demand" },
     { command: 'weeklyreport', description: 'Admin: get this week\'s report on demand' },
     { command: 'forceclockout', description: 'Admin: clock a clipper out' },
+    { command: 'checknow', description: 'Admin: send an immediate status check' },
     { command: 'help', description: 'List commands' },
   ]);
 

@@ -16,6 +16,8 @@ owner.
 - `/weeklyreport` — (admin only) get the trailing-7-days report on demand
 - `/forceclockout @user` — (admin only) clock a clipper out; can also be used
   by replying to their message instead of naming them
+- `/checknow @user` — (admin only) send an immediate status check outside the
+  normal 30-min cadence; also works by replying to their message
 - `/help` — list commands
 
 ## How status checks work
