@@ -34,11 +34,12 @@ function buildDeps(bot) {
       const expired = await db.expireCheckin(checkin.id);
       if (expired) {
         try {
+          const name = shift.username ? `@${shift.username}` : shift.display_name;
           await bot.telegram.editMessageText(
             checkin.chat_id,
             checkin.message_id,
             undefined,
-            `❌ Missed status check for ${shift.username ? '@' + shift.username : shift.display_name}.`
+            `❌ ${name} didn't confirm presence.`
           );
         } catch (e) {
           // message may have been edited already; ignore
