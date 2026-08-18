@@ -42,7 +42,7 @@ function buildDeps(bot) {
             `❌ ${name} didn't confirm presence.`
           );
         } catch (e) {
-          // message may have been edited already; ignore
+          console.error('Failed to edit expired check-in message', checkin.id, e);
         }
       }
     }, CHECKIN_GRACE_MS);
