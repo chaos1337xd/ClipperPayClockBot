@@ -8,7 +8,7 @@ const { formatDuration } = require('./format');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : null;
 const DAILY_REPORT_CRON = process.env.DAILY_REPORT_CRON || '0 0 * * *';
-const TZ = process.env.TZ || 'UTC';
+const TZ = process.env.TZ || 'Europe/Stockholm';
 
 if (!BOT_TOKEN) {
   console.error('Missing BOT_TOKEN env var.');
