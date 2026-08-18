@@ -9,9 +9,13 @@ owner.
 
 - `/clockin` — start your shift
 - `/clockout` — end your shift (auto-expires any check-in still pending)
-- `/status` — see how long you've been clocked in
+- `/status [@user]` — see how long you (or someone else) have been clocked in
 - `/whosonshift` — see everyone currently clocked in
-- `/report` — (admin only) get the report for today on demand
+- `/myhistory` — see your last 10 completed shifts
+- `/report` — (admin only) get today's report on demand
+- `/weeklyreport` — (admin only) get the trailing-7-days report on demand
+- `/forceclockout @user` — (admin only) clock a clipper out; can also be used
+  by replying to their message instead of naming them
 - `/help` — list commands
 
 ## How status checks work
@@ -29,15 +33,23 @@ their check-in schedules resume automatically. Any check-in left pending
 across a restart is marked missed (it can no longer be verified as answered
 in time).
 
-## Daily report
+## Reports
 
-Once a day (`DAILY_REPORT_CRON`, default midnight in `TZ`), the bot DMs the
-owner (`ADMIN_ID`) a summary: hours worked, number of shifts, and confirmed
-vs. missed check-ins, per clipper, for that day. `/report` gets the same
-thing on demand.
+Once a day (`DAILY_REPORT_CRON`, default midnight in `TZ`) and once a week
+(`WEEKLY_REPORT_CRON`, default Monday midnight, covering the trailing 7 days),
+the bot DMs the owner (`ADMIN_ID`) a summary: hours worked, number of shifts,
+and confirmed vs. missed check-ins, per clipper. `/report` and `/weeklyreport`
+get the same thing on demand.
 
 **Note:** the owner (`ADMIN_ID`) must have started a DM with the bot at least
 once before it can message them — Telegram bots can't message a user first.
+
+## Long-shift safety net
+
+If a clipper stays clocked in past `MAX_SHIFT_HOURS` (default 12) without
+clocking out, the admin gets a one-time DM warning — usually means someone
+forgot to run `/clockout`. From there, `/forceclockout` (reply to their
+message, or `/forceclockout @username`) closes their shift for them.
 
 ## Setup
 
@@ -58,9 +70,10 @@ once before it can message them — Telegram bots can't message a user first.
    `DATABASE_URL` into your service.
 4. Set the remaining env vars on the service: `BOT_TOKEN`, `ADMIN_ID`, and
    optionally `CHECKIN_INTERVAL_MINUTES`, `CHECKIN_GRACE_MINUTES`,
-   `DAILY_REPORT_CRON`, `TZ`.
-5. Deploy. The bot calls `db.init()` on boot, so the schema is created
-   automatically — no manual migration step.
+   `DAILY_REPORT_CRON`, `WEEKLY_REPORT_CRON`, `TZ`, `MAX_SHIFT_HOURS`,
+   `LONG_SHIFT_CHECK_CRON`.
+5. Deploy. The bot calls `db.init()` on boot, so the schema (and any new
+   columns) is created/migrated automatically — no manual migration step.
 
 ## Local dev
 

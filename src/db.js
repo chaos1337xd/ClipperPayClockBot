@@ -22,7 +22,8 @@ async function init() {
       display_name TEXT,
       chat_id BIGINT NOT NULL,
       clock_in TIMESTAMPTZ NOT NULL DEFAULT now(),
-      clock_out TIMESTAMPTZ
+      clock_out TIMESTAMPTZ,
+      long_shift_warned BOOLEAN NOT NULL DEFAULT FALSE
     );
 
     CREATE TABLE IF NOT EXISTS checkins (
@@ -37,6 +38,8 @@ async function init() {
 
     CREATE INDEX IF NOT EXISTS idx_shifts_open ON shifts (user_id) WHERE clock_out IS NULL;
     CREATE INDEX IF NOT EXISTS idx_checkins_pending ON checkins (status) WHERE status = 'pending';
+
+    ALTER TABLE shifts ADD COLUMN IF NOT EXISTS long_shift_warned BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 }
 
@@ -51,6 +54,37 @@ async function getOpenShift(userId) {
 async function getAllOpenShifts() {
   const { rows } = await pool.query(`SELECT * FROM shifts WHERE clock_out IS NULL`);
   return rows;
+}
+
+async function getOpenShiftByUsername(username) {
+  const { rows } = await pool.query(
+    `SELECT * FROM shifts WHERE clock_out IS NULL AND lower(username) = lower($1) LIMIT 1`,
+    [username]
+  );
+  return rows[0] || null;
+}
+
+async function getUserShiftHistory(userId, limit) {
+  const { rows } = await pool.query(
+    `SELECT * FROM shifts WHERE user_id = $1 AND clock_out IS NOT NULL ORDER BY clock_in DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return rows;
+}
+
+async function getLongRunningUnwarnedShifts(thresholdSeconds) {
+  const { rows } = await pool.query(
+    `SELECT * FROM shifts
+     WHERE clock_out IS NULL
+       AND long_shift_warned = FALSE
+       AND EXTRACT(EPOCH FROM (now() - clock_in)) >= $1`,
+    [thresholdSeconds]
+  );
+  return rows;
+}
+
+async function markShiftWarned(shiftId) {
+  await pool.query(`UPDATE shifts SET long_shift_warned = TRUE WHERE id = $1`, [shiftId]);
 }
 
 async function createShift(userId, username, displayName, chatId) {
@@ -111,20 +145,41 @@ async function getPendingCheckins() {
 }
 
 async function getDailyReportData(sinceIso) {
+  // Aggregate shifts and checkins separately before joining — joining them
+  // directly fans shift rows out once per checkin, causing SUM(seconds_worked)
+  // to multiply each shift's duration by its checkin count.
   const { rows } = await pool.query(
     `
+    WITH shift_agg AS (
+      SELECT
+        user_id,
+        COALESCE(display_name, username, user_id::text) AS name,
+        SUM(EXTRACT(EPOCH FROM (COALESCE(clock_out, now()) - clock_in))) AS seconds_worked,
+        COUNT(*) AS shifts_count
+      FROM shifts
+      WHERE clock_in >= $1
+      GROUP BY user_id, name
+    ),
+    checkin_agg AS (
+      SELECT
+        s.user_id,
+        SUM(CASE WHEN c.status = 'missed' THEN 1 ELSE 0 END) AS missed_checkins,
+        SUM(CASE WHEN c.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_checkins
+      FROM shifts s
+      JOIN checkins c ON c.shift_id = s.id
+      WHERE s.clock_in >= $1
+      GROUP BY s.user_id
+    )
     SELECT
-      s.user_id,
-      COALESCE(s.display_name, s.username, s.user_id::text) AS name,
-      SUM(EXTRACT(EPOCH FROM (COALESCE(s.clock_out, now()) - s.clock_in))) AS seconds_worked,
-      COUNT(DISTINCT s.id) AS shifts_count,
-      COALESCE(SUM(CASE WHEN c.status = 'missed' THEN 1 ELSE 0 END), 0) AS missed_checkins,
-      COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN 1 ELSE 0 END), 0) AS confirmed_checkins
-    FROM shifts s
-    LEFT JOIN checkins c ON c.shift_id = s.id
-    WHERE s.clock_in >= $1
-    GROUP BY s.user_id, name
-    ORDER BY seconds_worked DESC
+      sa.user_id,
+      sa.name,
+      sa.seconds_worked,
+      sa.shifts_count,
+      COALESCE(ca.missed_checkins, 0) AS missed_checkins,
+      COALESCE(ca.confirmed_checkins, 0) AS confirmed_checkins
+    FROM shift_agg sa
+    LEFT JOIN checkin_agg ca ON ca.user_id = sa.user_id
+    ORDER BY sa.seconds_worked DESC
     `,
     [sinceIso]
   );
@@ -136,6 +191,10 @@ module.exports = {
   init,
   getOpenShift,
   getAllOpenShifts,
+  getOpenShiftByUsername,
+  getUserShiftHistory,
+  getLongRunningUnwarnedShifts,
+  markShiftWarned,
   createShift,
   closeShift,
   createCheckin,
