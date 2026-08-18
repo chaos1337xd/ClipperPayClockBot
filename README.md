@@ -1,6 +1,6 @@
 # clipper-payclock
 
-Telegram bot that tracks clipper shifts in a group chat: clock in/out, periodic
+A Telegram bot that tracks clipper shifts in a group chat: clock in/out, periodic
 "are you still here" status checks with a tap-to-confirm button, and a daily
 summary report (hours worked + missed check-ins) sent privately to the bot
 owner.
