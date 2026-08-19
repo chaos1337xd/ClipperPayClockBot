@@ -12,6 +12,8 @@ owner.
 - `/status [@user]` — see how long you (or someone else) have been clocked in
 - `/whosonshift` — see everyone currently clocked in
 - `/myhistory` — see your last 10 completed shifts
+- `/checkins [@user]` — (admin only) see status-check timestamps (sent +
+  confirmed) for a clipper's current or most recent shift
 - `/report` — (admin only) get today's report on demand
 - `/weeklyreport` — (admin only) get the trailing-7-days report on demand
 - `/forceclockout @user` — (admin only) clock a clipper out; can also be used
@@ -31,9 +33,12 @@ Multiple clippers can be on shift at once; each gets their own independent
 check-in schedule.
 
 If the bot restarts, active shifts are picked back up from the database and
-their check-in schedules resume automatically. Any check-in left pending
-across a restart is marked missed (it can no longer be verified as answered
-in time).
+their check-in schedules resume automatically. Timing is anchored to the
+shift's actual timeline (the last check-in sent, or clock-in if there hasn't
+been one yet) rather than to the restart moment — so a restart doesn't reset
+the 30-min clock and drift the schedule later with every deploy. Any
+check-in left pending across a restart is marked missed (it can no longer be
+verified as answered in time).
 
 ## Reports
 

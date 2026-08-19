@@ -79,6 +79,30 @@ async function getUserShiftHistory(userId, limit) {
   return rows;
 }
 
+async function getMostRecentShiftByUsername(username) {
+  const { rows } = await pool.query(
+    `SELECT * FROM shifts WHERE lower(username) = lower($1) ORDER BY clock_in DESC LIMIT 1`,
+    [username]
+  );
+  return rows[0] || null;
+}
+
+async function getLastCheckinSentAt(shiftId) {
+  const { rows } = await pool.query(
+    `SELECT sent_at FROM checkins WHERE shift_id = $1 ORDER BY sent_at DESC LIMIT 1`,
+    [shiftId]
+  );
+  return rows[0]?.sent_at || null;
+}
+
+async function getCheckinsForShift(shiftId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM checkins WHERE shift_id = $1 ORDER BY sent_at ASC`,
+    [shiftId]
+  );
+  return rows;
+}
+
 async function getLongRunningUnwarnedShifts(thresholdSeconds) {
   const { rows } = await pool.query(
     `SELECT * FROM shifts
@@ -207,8 +231,11 @@ module.exports = {
   getOpenShift,
   getAllOpenShifts,
   getOpenShiftByUsername,
+  getMostRecentShiftByUsername,
   updateOpenShiftsChatId,
   getUserShiftHistory,
+  getLastCheckinSentAt,
+  getCheckinsForShift,
   getLongRunningUnwarnedShifts,
   markShiftWarned,
   createShift,

@@ -72,19 +72,38 @@ function scheduleExpiry(bot, shift, checkin) {
   timers.set(shift.id, entry);
 }
 
-function startShiftChecks(bot, shift) {
-  const intervalTimer = setInterval(() => {
+// Schedules check-ins on a fixed cadence anchored to the shift's actual
+// timeline (last checkin sent, or clock-in if there hasn't been one yet)
+// rather than to "now" — otherwise every bot restart resets the 30-min
+// clock from the moment it comes back up, drifting the real schedule later
+// and later with each restart.
+async function startShiftChecks(bot, shift) {
+  const lastSentAt = await db.getLastCheckinSentAt(shift.id);
+  const baseline = new Date(lastSentAt || shift.clock_in).getTime();
+  const nextAt = baseline + CHECKIN_INTERVAL_MS;
+  const delay = Math.max(0, nextAt - Date.now());
+
+  const startTimeout = setTimeout(() => {
     sendCheckin(bot, shift).catch((e) => console.error('checkin send failed', e));
-  }, CHECKIN_INTERVAL_MS);
+
+    const intervalTimer = setInterval(() => {
+      sendCheckin(bot, shift).catch((e) => console.error('checkin send failed', e));
+    }, CHECKIN_INTERVAL_MS);
+
+    const entry = timers.get(shift.id) || {};
+    entry.intervalTimer = intervalTimer;
+    timers.set(shift.id, entry);
+  }, delay);
 
   const entry = timers.get(shift.id) || {};
-  entry.intervalTimer = intervalTimer;
+  entry.startTimeout = startTimeout;
   timers.set(shift.id, entry);
 }
 
 function stopShiftChecks(shiftId) {
   const entry = timers.get(shiftId);
   if (!entry) return;
+  if (entry.startTimeout) clearTimeout(entry.startTimeout);
   if (entry.intervalTimer) clearInterval(entry.intervalTimer);
   if (entry.expireTimer) clearTimeout(entry.expireTimer);
   timers.delete(shiftId);

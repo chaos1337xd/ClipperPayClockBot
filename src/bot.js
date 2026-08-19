@@ -31,6 +31,10 @@ function fmtLocal(date) {
   return new Date(date).toLocaleString('en-US', { timeZone: TZ });
 }
 
+function fmtTime(date) {
+  return new Date(date).toLocaleTimeString('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+}
+
 function getArgs(ctx) {
   return (ctx.message.text || '').trim().split(/\s+/).slice(1);
 }
@@ -60,6 +64,19 @@ async function findOpenShiftForTarget(target) {
   return null;
 }
 
+// Like findOpenShiftForTarget, but falls back to the most recent completed
+// shift if there's no open one — used by /checkins so it still works right
+// after someone clocks out.
+async function findAnyShiftForTarget(target) {
+  if (target.userId) {
+    return (await db.getOpenShift(target.userId)) || (await db.getUserShiftHistory(target.userId, 1))[0] || null;
+  }
+  if (target.username) {
+    return await db.getMostRecentShiftByUsername(target.username);
+  }
+  return null;
+}
+
 async function notifyAdmin(text) {
   if (!ADMIN_ID) return;
   try {
@@ -76,7 +93,7 @@ bot.command('clockin', async (ctx) => {
     return ctx.reply(`You're already clocked in (since ${fmtLocal(existing.clock_in)}).`);
   }
   const shift = await db.createShift(userId, ctx.from.username || null, displayNameOf(ctx.from), ctx.chat.id);
-  scheduler.startShiftChecks(bot, shift);
+  await scheduler.startShiftChecks(bot, shift);
   await ctx.reply(
     `✅ ${displayNameOf(ctx.from)} clocked in. Status checks every ${scheduler.CHECKIN_INTERVAL_MS / 60000} min — tap the button when prompted.`
   );
@@ -185,6 +202,30 @@ bot.command('myhistory', async (ctx) => {
   await ctx.reply(`Your last ${shifts.length} shift(s):\n${lines.join('\n')}`);
 });
 
+bot.command('checkins', async (ctx) => {
+  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+    return ctx.reply('This command is admin-only.');
+  }
+  const target = resolveTargetFromArgsOrReply(ctx);
+  const shift = target ? await findAnyShiftForTarget(target) : await findAnyShiftForTarget({ userId: ctx.from.id });
+  if (!shift) {
+    return ctx.reply("No shifts on record for that clipper.");
+  }
+  const checkins = await db.getCheckinsForShift(shift.id);
+  const name = shift.username ? `@${shift.username}` : shift.display_name;
+  const shiftLabel = shift.clock_out
+    ? `shift ${fmtLocal(shift.clock_in)} – ${fmtLocal(shift.clock_out)}`
+    : `current shift (started ${fmtLocal(shift.clock_in)})`;
+
+  if (checkins.length === 0) {
+    return ctx.reply(`No status checks recorded yet for ${name}'s ${shiftLabel}.`);
+  }
+
+  const icon = { confirmed: '✅', missed: '❌', pending: '⏳' };
+  const lines = checkins.map((c) => `${icon[c.status] || '•'} ${fmtTime(c.sent_at)}${c.status === 'confirmed' ? ` (confirmed ${fmtTime(c.responded_at)})` : ''}`);
+  await ctx.reply(`${name} — ${shiftLabel}:\n${lines.join('\n')}`);
+});
+
 bot.command('report', async (ctx) => {
   if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
     return ctx.reply("This command is admin-only.");
@@ -213,6 +254,7 @@ bot.command('help', async (ctx) => {
       '/status [@user] — see your (or their) current shift length',
       '/whosonshift — see who is currently clocked in',
       '/myhistory — see your last 10 completed shifts',
+      ADMIN_ID ? '/checkins [@user] — (admin) see status-check timestamps for a shift' : null,
       ADMIN_ID ? '/report — (admin) get an on-demand daily report' : null,
       ADMIN_ID ? '/weeklyreport — (admin) get an on-demand weekly report' : null,
       ADMIN_ID ? '/forceclockout @user — (admin) clock someone out, reply to their message also works' : null,
@@ -291,7 +333,7 @@ async function checkLongRunningShifts() {
 async function resumeActiveShifts() {
   const open = await db.getAllOpenShifts();
   for (const shift of open) {
-    scheduler.startShiftChecks(bot, shift);
+    await scheduler.startShiftChecks(bot, shift);
   }
   console.log(`Resumed check-in scheduling for ${open.length} active shift(s).`);
 
@@ -350,6 +392,7 @@ async function main() {
     { command: 'status', description: 'See shift length (yours or @user)' },
     { command: 'whosonshift', description: 'See who is currently clocked in' },
     { command: 'myhistory', description: 'See your last 10 shifts' },
+    { command: 'checkins', description: 'Admin: see status-check timestamps for a shift' },
     { command: 'report', description: "Admin: get today's report on demand" },
     { command: 'weeklyreport', description: 'Admin: get this week\'s report on demand' },
     { command: 'forceclockout', description: 'Admin: clock a clipper out' },
