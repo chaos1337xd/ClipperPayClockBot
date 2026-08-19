@@ -3,7 +3,9 @@ const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 const db = require('./db');
 const scheduler = require('./scheduler');
-const { formatDuration } = require('./format');
+const { formatDuration, escapeHtml, nameTag } = require('./format');
+
+const HTML = { parse_mode: 'HTML' };
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : null;
@@ -25,6 +27,10 @@ const bot = new Telegraf(BOT_TOKEN);
 
 function displayNameOf(from) {
   return [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || String(from.id);
+}
+
+function fromTag(from) {
+  return nameTag({ username: from.username, display_name: displayNameOf(from) });
 }
 
 function fmtLocal(date) {
@@ -80,7 +86,7 @@ async function findAnyShiftForTarget(target) {
 async function notifyAdmin(text) {
   if (!ADMIN_ID) return;
   try {
-    await bot.telegram.sendMessage(ADMIN_ID, text);
+    await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
   } catch (e) {
     console.error('Failed to DM admin', e);
   }
@@ -90,15 +96,16 @@ bot.command('clockin', async (ctx) => {
   const userId = ctx.from.id;
   const existing = await db.getOpenShift(userId);
   if (existing) {
-    return ctx.reply(`You're already clocked in (since ${fmtLocal(existing.clock_in)}).`);
+    return ctx.reply(`You're already clocked in (since <b>${fmtLocal(existing.clock_in)}</b>).`, HTML);
   }
   const shift = await db.createShift(userId, ctx.from.username || null, displayNameOf(ctx.from), ctx.chat.id);
   await scheduler.startShiftChecks(bot, shift);
   await ctx.reply(
-    `✅ ${displayNameOf(ctx.from)} clocked in. Status checks every ${scheduler.CHECKIN_INTERVAL_MS / 60000} min — tap the button when prompted.`
+    `✅ ${fromTag(ctx.from)} clocked in. Status checks every <b>${scheduler.CHECKIN_INTERVAL_MS / 60000}</b> min — tap the button when prompted.`,
+    HTML
   );
   if (userId !== ADMIN_ID) {
-    await notifyAdmin(`✅ ${displayNameOf(ctx.from)} clocked in (${fmtLocal(shift.clock_in)}).`);
+    await notifyAdmin(`✅ ${fromTag(ctx.from)} clocked in (<b>${fmtLocal(shift.clock_in)}</b>).`);
   }
 });
 
@@ -112,9 +119,9 @@ bot.command('clockout', async (ctx) => {
   await db.expirePendingCheckinsForShift(shift.id);
   const closed = await db.closeShift(shift.id);
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
-  await ctx.reply(`🛑 ${displayNameOf(ctx.from)} clocked out. Shift length: ${formatDuration(seconds)}.`);
+  await ctx.reply(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
   if (userId !== ADMIN_ID) {
-    await notifyAdmin(`🛑 ${displayNameOf(ctx.from)} clocked out. Shift length: ${formatDuration(seconds)}.`);
+    await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`);
   }
 });
 
@@ -154,8 +161,7 @@ bot.command('forceclockout', async (ctx) => {
   await db.expirePendingCheckinsForShift(shift.id);
   const closed = await db.closeShift(shift.id);
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
-  const name = shift.username ? `@${shift.username}` : shift.display_name;
-  await ctx.reply(`🛑 ${name} force-clocked out by admin. Shift length: ${formatDuration(seconds)}.`);
+  await ctx.reply(`🛑 ${nameTag(shift)} force-clocked out by admin. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
 });
 
 bot.command('status', async (ctx) => {
@@ -165,7 +171,7 @@ bot.command('status', async (ctx) => {
     const shift = await db.getOpenShift(ctx.from.id);
     if (!shift) return ctx.reply("You're not currently clocked in.");
     const seconds = (Date.now() - new Date(shift.clock_in).getTime()) / 1000;
-    return ctx.reply(`You've been clocked in for ${formatDuration(seconds)} (since ${fmtLocal(shift.clock_in)}).`);
+    return ctx.reply(`You've been clocked in for <b>${formatDuration(seconds)}</b> (since ${fmtLocal(shift.clock_in)}).`, HTML);
   }
 
   const shift = await findOpenShiftForTarget(target);
@@ -173,8 +179,7 @@ bot.command('status', async (ctx) => {
     return ctx.reply("That clipper isn't currently clocked in.");
   }
   const seconds = (Date.now() - new Date(shift.clock_in).getTime()) / 1000;
-  const name = shift.username ? `@${shift.username}` : shift.display_name;
-  await ctx.reply(`${name} has been clocked in for ${formatDuration(seconds)} (since ${fmtLocal(shift.clock_in)}).`);
+  await ctx.reply(`${nameTag(shift)} has been clocked in for <b>${formatDuration(seconds)}</b> (since ${fmtLocal(shift.clock_in)}).`, HTML);
 });
 
 bot.command('whosonshift', async (ctx) => {
@@ -184,10 +189,9 @@ bot.command('whosonshift', async (ctx) => {
   }
   const lines = open.map((s) => {
     const seconds = (Date.now() - new Date(s.clock_in).getTime()) / 1000;
-    const name = s.username ? `@${s.username}` : s.display_name;
-    return `• ${name} — ${formatDuration(seconds)}`;
+    return `• ${nameTag(s)} — <b>${formatDuration(seconds)}</b>`;
   });
-  await ctx.reply(`Currently on shift:\n${lines.join('\n')}`);
+  await ctx.reply(`Currently on shift:\n${lines.join('\n')}`, HTML);
 });
 
 bot.command('myhistory', async (ctx) => {
@@ -197,9 +201,9 @@ bot.command('myhistory', async (ctx) => {
   }
   const lines = shifts.map((s) => {
     const seconds = (new Date(s.clock_out) - new Date(s.clock_in)) / 1000;
-    return `• ${fmtLocal(s.clock_in)} — ${formatDuration(seconds)}`;
+    return `• ${fmtLocal(s.clock_in)} — <b>${formatDuration(seconds)}</b>`;
   });
-  await ctx.reply(`Your last ${shifts.length} shift(s):\n${lines.join('\n')}`);
+  await ctx.reply(`Your last ${shifts.length} shift(s):\n${lines.join('\n')}`, HTML);
 });
 
 bot.command('checkins', async (ctx) => {
@@ -212,18 +216,17 @@ bot.command('checkins', async (ctx) => {
     return ctx.reply("No shifts on record for that clipper.");
   }
   const checkins = await db.getCheckinsForShift(shift.id);
-  const name = shift.username ? `@${shift.username}` : shift.display_name;
   const shiftLabel = shift.clock_out
     ? `shift ${fmtLocal(shift.clock_in)} – ${fmtLocal(shift.clock_out)}`
     : `current shift (started ${fmtLocal(shift.clock_in)})`;
 
   if (checkins.length === 0) {
-    return ctx.reply(`No status checks recorded yet for ${name}'s ${shiftLabel}.`);
+    return ctx.reply(`No status checks recorded yet for ${nameTag(shift)}'s ${shiftLabel}.`, HTML);
   }
 
   const icon = { confirmed: '✅', missed: '❌', pending: '⏳' };
   const lines = checkins.map((c) => `${icon[c.status] || '•'} ${fmtTime(c.sent_at)}${c.status === 'confirmed' ? ` (confirmed ${fmtTime(c.responded_at)})` : ''}`);
-  await ctx.reply(`${name} — ${shiftLabel}:\n${lines.join('\n')}`);
+  await ctx.reply(`${nameTag(shift)} — ${shiftLabel}:\n${lines.join('\n')}`, HTML);
 });
 
 bot.command('report', async (ctx) => {
@@ -233,7 +236,7 @@ bot.command('report', async (ctx) => {
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const report = await buildReportText(since.toISOString(), 'Daily');
-  await ctx.reply(report);
+  await ctx.reply(report, HTML);
 });
 
 bot.command('weeklyreport', async (ctx) => {
@@ -242,26 +245,27 @@ bot.command('weeklyreport', async (ctx) => {
   }
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const report = await buildReportText(since.toISOString(), 'Weekly');
-  await ctx.reply(report);
+  await ctx.reply(report, HTML);
 });
 
 bot.command('help', async (ctx) => {
   await ctx.reply(
     [
-      'Payclock commands:',
-      '/clockin — start your shift',
-      '/clockout — end your shift',
-      '/status [@user] — see your (or their) current shift length',
-      '/whosonshift — see who is currently clocked in',
-      '/myhistory — see your last 10 completed shifts',
-      ADMIN_ID ? '/checkins [@user] — (admin) see status-check timestamps for a shift' : null,
-      ADMIN_ID ? '/report — (admin) get an on-demand daily report' : null,
-      ADMIN_ID ? '/weeklyreport — (admin) get an on-demand weekly report' : null,
-      ADMIN_ID ? '/forceclockout @user — (admin) clock someone out, reply to their message also works' : null,
-      ADMIN_ID ? '/checknow @user — (admin) send an immediate status check, reply to their message also works' : null,
+      '<b>Payclock commands:</b>',
+      '<code>/clockin</code> — start your shift',
+      '<code>/clockout</code> — end your shift',
+      '<code>/status [@user]</code> — see your (or their) current shift length',
+      '<code>/whosonshift</code> — see who is currently clocked in',
+      '<code>/myhistory</code> — see your last 10 completed shifts',
+      ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
+      ADMIN_ID ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
+      ADMIN_ID ? '<code>/weeklyreport</code> — (admin) get an on-demand weekly report' : null,
+      ADMIN_ID ? '<code>/forceclockout @user</code> — (admin) clock someone out, reply to their message also works' : null,
+      ADMIN_ID ? '<code>/checknow @user</code> — (admin) send an immediate status check, reply to their message also works' : null,
     ]
       .filter(Boolean)
-      .join('\n')
+      .join('\n'),
+    HTML
   );
 });
 
@@ -294,21 +298,20 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('Too late — this check-in already expired.');
   }
 
-  const name = shift.username ? `@${shift.username}` : shift.display_name;
-  await ctx.editMessageText(`✅ ${name} confirmed presence.`);
+  await ctx.editMessageText(`✅ ${nameTag(shift)} confirmed presence.`, HTML);
   await ctx.answerCbQuery("Confirmed, thanks!");
 });
 
 async function buildReportText(sinceIso, label) {
   const rows = await db.getDailyReportData(sinceIso);
   if (rows.length === 0) {
-    return `📊 ${label} payclock report\nNo shifts recorded in this period.`;
+    return `<b>📊 ${label} payclock report</b>\nNo shifts recorded in this period.`;
   }
   const lines = rows.map((r) => {
     const hours = formatDuration(Number(r.seconds_worked));
-    return `• ${r.name}: ${hours} worked, ${r.shifts_count} shift(s), ${r.confirmed_checkins} confirmed / ${r.missed_checkins} missed check-ins`;
+    return `• <b>${escapeHtml(r.name)}</b>: <b>${hours}</b> worked, ${r.shifts_count} shift(s), ${r.confirmed_checkins} confirmed / ${r.missed_checkins} missed check-ins`;
   });
-  return `📊 ${label} payclock report\n${lines.join('\n')}`;
+  return `<b>📊 ${label} payclock report</b>\n${lines.join('\n')}`;
 }
 
 async function checkLongRunningShifts() {
@@ -316,12 +319,12 @@ async function checkLongRunningShifts() {
   const thresholdSeconds = MAX_SHIFT_HOURS * 60 * 60;
   const longShifts = await db.getLongRunningUnwarnedShifts(thresholdSeconds);
   for (const shift of longShifts) {
-    const name = shift.username ? `@${shift.username}` : shift.display_name;
     const seconds = (Date.now() - new Date(shift.clock_in).getTime()) / 1000;
     try {
       await bot.telegram.sendMessage(
         ADMIN_ID,
-        `⚠️ ${name} has been clocked in for ${formatDuration(seconds)} (since ${fmtLocal(shift.clock_in)}) — might have forgotten to clock out.`
+        `⚠️ ${nameTag(shift)} has been clocked in for <b>${formatDuration(seconds)}</b> (since ${fmtLocal(shift.clock_in)}) — might have forgotten to clock out.`,
+        HTML
       );
     } catch (e) {
       console.error('Failed to send long-shift warning', e);
@@ -342,11 +345,13 @@ async function resumeActiveShifts() {
   for (const c of pending) {
     await db.expireCheckin(c.id);
   }
+
+  return open.length;
 }
 
 async function main() {
   await db.init();
-  await resumeActiveShifts();
+  const resumedCount = await resumeActiveShifts();
 
   if (ADMIN_ID) {
     cron.schedule(
@@ -356,7 +361,7 @@ async function main() {
           const since = new Date();
           since.setHours(0, 0, 0, 0);
           const text = await buildReportText(since.toISOString(), 'Daily');
-          await bot.telegram.sendMessage(ADMIN_ID, text);
+          await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
         } catch (e) {
           console.error('Failed to send daily report', e);
         }
@@ -371,7 +376,7 @@ async function main() {
         try {
           const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
           const text = await buildReportText(since.toISOString(), 'Weekly');
-          await bot.telegram.sendMessage(ADMIN_ID, text);
+          await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
         } catch (e) {
           console.error('Failed to send weekly report', e);
         }
@@ -402,12 +407,19 @@ async function main() {
 
   await bot.launch();
   console.log('Bot started.');
+  await notifyAdmin(`🟢 Bot online — resumed <b>${resumedCount}</b> active shift(s).`);
 }
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
-main().catch((e) => {
-  console.error('Fatal startup error', e);
+async function crashAndExit(reason, err) {
+  console.error(reason, err);
+  await notifyAdmin(`🔴 Bot crashed (${escapeHtml(reason)})\n<code>${escapeHtml(String(err?.message || err))}</code>`);
   process.exit(1);
-});
+}
+
+process.on('uncaughtException', (err) => crashAndExit('uncaughtException', err));
+process.on('unhandledRejection', (err) => crashAndExit('unhandledRejection', err));
+
+main().catch((e) => crashAndExit('Fatal startup error', e));

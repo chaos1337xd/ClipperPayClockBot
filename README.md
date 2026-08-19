@@ -40,6 +40,14 @@ the 30-min clock and drift the schedule later with every deploy. Any
 check-in left pending across a restart is marked missed (it can no longer be
 verified as answered in time).
 
+## Bot lifecycle visibility
+
+The owner (`ADMIN_ID`) gets a DM whenever the bot comes online (🟢, with how
+many active shifts it resumed) and whenever it crashes (🔴, with the error),
+via `uncaughtException`/`unhandledRejection` handlers — so an outage or a
+stuck restart shows up immediately instead of only being noticeable once
+check-ins silently stop.
+
 ## Reports
 
 Once a day (`DAILY_REPORT_CRON`, default midnight in `TZ`) and once a week

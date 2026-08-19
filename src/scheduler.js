@@ -1,7 +1,10 @@
 const db = require('./db');
+const { nameTag } = require('./format');
 
 const CHECKIN_INTERVAL_MS = Number(process.env.CHECKIN_INTERVAL_MINUTES || 30) * 60 * 1000;
 const CHECKIN_GRACE_MS = Number(process.env.CHECKIN_GRACE_MINUTES || 5) * 60 * 1000;
+
+const HTML = { parse_mode: 'HTML' };
 
 // shiftId -> { intervalTimer, expireTimer }
 const timers = new Map();
@@ -9,8 +12,7 @@ const timers = new Map();
 // Sends a status-check prompt for a shift immediately. Used both by the
 // recurring interval and by the admin's manual /checknow trigger.
 async function sendCheckin(bot, shift) {
-  const mention = shift.username ? `@${shift.username}` : (shift.display_name || 'clipper');
-  const text = `⏰ Status check for ${mention} — tap the button to confirm you're still on shift.`;
+  const text = `⏰ Status check for ${nameTag(shift)} — tap the button to confirm you're still on shift.`;
 
   // Create the checkin row first so the button's callback_data can carry
   // the real id from the start — no placeholder + patch-afterward race
@@ -20,6 +22,7 @@ async function sendCheckin(bot, shift) {
 
   const sendTo = (chatId) =>
     bot.telegram.sendMessage(chatId, text, {
+      ...HTML,
       reply_markup: {
         inline_keyboard: [[{ text: "✅ I'm here", callback_data: `checkin:${checkin.id}` }]],
       },
@@ -54,12 +57,12 @@ function scheduleExpiry(bot, shift, checkin) {
     const expired = await db.expireCheckin(checkin.id);
     if (expired) {
       try {
-        const name = shift.username ? `@${shift.username}` : shift.display_name;
         await bot.telegram.editMessageText(
           checkin.chat_id,
           checkin.message_id,
           undefined,
-          `❌ ${name} didn't confirm presence.`
+          `❌ ${nameTag(shift)} didn't confirm presence.`,
+          HTML
         );
       } catch (e) {
         console.error('Failed to edit expired check-in message', checkin.id, e);
