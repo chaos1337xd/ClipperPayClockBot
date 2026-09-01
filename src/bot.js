@@ -3,6 +3,7 @@ const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 const db = require('./db');
 const scheduler = require('./scheduler');
+const schedule = require('./schedule');
 const { formatDuration, escapeHtml, nameTag } = require('./format');
 
 const HTML = { parse_mode: 'HTML' };
@@ -14,6 +15,8 @@ const WEEKLY_REPORT_CRON = process.env.WEEKLY_REPORT_CRON || '0 0 * * 1';
 const TZ = process.env.TZ || 'Europe/Stockholm';
 const MAX_SHIFT_HOURS = Number(process.env.MAX_SHIFT_HOURS || 12);
 const LONG_SHIFT_CHECK_CRON = process.env.LONG_SHIFT_CHECK_CRON || '*/15 * * * *';
+const SHIFT_START_REMINDER_MINUTES = Number(process.env.SHIFT_START_REMINDER_MINUTES || 30);
+const SCHEDULE_REMINDER_CRON = process.env.SCHEDULE_REMINDER_CRON || '*/5 * * * *';
 
 if (!BOT_TOKEN) {
   console.error('Missing BOT_TOKEN env var.');
@@ -184,14 +187,30 @@ bot.command('status', async (ctx) => {
 
 bot.command('whosonshift', async (ctx) => {
   const open = await db.getAllOpenShifts();
+  const openByUsername = new Map(open.filter((s) => s.username).map((s) => [s.username.toLowerCase(), s]));
+
+  const lines = [];
   if (open.length === 0) {
-    return ctx.reply('Nobody is currently clocked in.');
+    lines.push('Nobody is currently clocked in.');
+  } else {
+    lines.push('<b>Currently on shift</b>');
+    for (const s of open) {
+      const seconds = (Date.now() - new Date(s.clock_in).getTime()) / 1000;
+      lines.push(`• ${nameTag(s)} — <b>${formatDuration(seconds)}</b>`);
+    }
   }
-  const lines = open.map((s) => {
-    const seconds = (Date.now() - new Date(s.clock_in).getTime()) / 1000;
-    return `• ${nameTag(s)} — <b>${formatDuration(seconds)}</b>`;
-  });
-  await ctx.reply(`Currently on shift:\n${lines.join('\n')}`, HTML);
+
+  const scheduled = schedule.getScheduledNow();
+  if (scheduled.length > 0) {
+    lines.push('');
+    lines.push('<b>Scheduled now</b>');
+    for (const entry of scheduled) {
+      const isOn = openByUsername.has(entry.username.toLowerCase());
+      lines.push(`${isOn ? '✅' : '⚠️'} @${escapeHtml(entry.username)}${isOn ? '' : ' — not clocked in'}`);
+    }
+  }
+
+  await ctx.reply(lines.join('\n'), HTML);
 });
 
 bot.command('myhistory', async (ctx) => {
@@ -333,6 +352,66 @@ async function checkLongRunningShifts() {
   }
 }
 
+function padHour(h) {
+  return `${String(((h % 24) + 24) % 24).padStart(2, '0')}:00`;
+}
+
+// Dedup so the wide check windows below don't double-send across ticks.
+// Cleared implicitly on restart — worst case a duplicate reminder right
+// after a redeploy, which is harmless at this scale.
+const remindedStarts = new Set();
+const remindedEnds = new Set();
+
+async function checkScheduleReminders() {
+  const now = new Date();
+  const occurrences = schedule.getBlockOccurrencesAround(now);
+
+  for (const occ of occurrences) {
+    const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
+    const startKey = `${occ.username}_${occ.start.toISOString()}_start`;
+    if (
+      startDeltaMin <= SHIFT_START_REMINDER_MINUTES &&
+      startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6 &&
+      !remindedStarts.has(startKey)
+    ) {
+      remindedStarts.add(startKey);
+      const userId = await db.getUserIdByUsername(occ.username);
+      if (!userId) {
+        console.warn(`No known Telegram user for scheduled username @${occ.username} — skipping start reminder.`);
+        continue;
+      }
+      try {
+        await bot.telegram.sendMessage(
+          userId,
+          `⏰ You're scheduled on shift in ~${SHIFT_START_REMINDER_MINUTES} min — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. Don't forget to <code>/clockin</code> when you start!`,
+          HTML
+        );
+      } catch (e) {
+        console.error(`Failed to send start reminder to @${occ.username}`, e);
+      }
+    }
+
+    const endDeltaMin = (occ.end.getTime() - now.getTime()) / 60000;
+    const endKey = `${occ.username}_${occ.end.toISOString()}_end`;
+    if (endDeltaMin <= 0 && endDeltaMin > -6 && !remindedEnds.has(endKey)) {
+      remindedEnds.add(endKey);
+      const userId = await db.getUserIdByUsername(occ.username);
+      if (!userId) continue;
+      const stillClockedIn = await db.getOpenShift(userId);
+      if (!stillClockedIn) continue;
+      try {
+        await bot.telegram.sendMessage(
+          userId,
+          `🛑 Your scheduled shift (<b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>) just wrapped up. Don't forget to <code>/clockout</code>!`,
+          HTML
+        );
+      } catch (e) {
+        console.error(`Failed to send end reminder to @${occ.username}`, e);
+      }
+    }
+  }
+}
+
 async function resumeActiveShifts() {
   const open = await db.getAllOpenShifts();
   for (const shift of open) {
@@ -390,6 +469,13 @@ async function main() {
     });
     console.log(`Long-shift safety check scheduled: "${LONG_SHIFT_CHECK_CRON}" (threshold ${MAX_SHIFT_HOURS}h)`);
   }
+
+  cron.schedule(SCHEDULE_REMINDER_CRON, () => {
+    checkScheduleReminders().catch((e) => console.error('Schedule reminder check failed', e));
+  });
+  console.log(
+    `Schedule reminders scheduled: "${SCHEDULE_REMINDER_CRON}" (${SHIFT_START_REMINDER_MINUTES}min heads-up + clock-out nudge)`
+  );
 
   await bot.telegram.setMyCommands([
     { command: 'clockin', description: 'Start your shift' },

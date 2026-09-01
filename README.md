@@ -10,7 +10,9 @@ owner.
 - `/clockin` — start your shift
 - `/clockout` — end your shift (auto-expires any check-in still pending)
 - `/status [@user]` — see how long you (or someone else) have been clocked in
-- `/whosonshift` — see everyone currently clocked in
+- `/whosonshift` — see everyone currently clocked in, plus who's scheduled to
+  be on shift right now per the roster (✅ scheduled + clocked in, ⚠️
+  scheduled but not clocked in)
 - `/myhistory` — see your last 10 completed shifts
 - `/checkins [@user]` — (admin only) see status-check timestamps (sent +
   confirmed) for a clipper's current or most recent shift
@@ -66,6 +68,31 @@ clocking out, the admin gets a one-time DM warning — usually means someone
 forgot to run `/clockout`. From there, `/forceclockout` (reply to their
 message, or `/forceclockout @username`) closes their shift for them.
 
+## Roster / schedule reminders
+
+[`src/schedule.js`](src/schedule.js) holds a static roster parsed from the
+team's rota spreadsheet: fixed-CET (UTC+1, no DST) hourly slots per person,
+per day, alternating between two weekly blocks by ISO week parity (odd week
+number → WEEK1, even → WEEK2). It powers two things:
+
+- `/whosonshift`'s "Scheduled now" section (who's supposed to be on, cross-
+  referenced against who's actually clocked in).
+- Two automatic DMs to each clipper, checked every `SCHEDULE_REMINDER_CRON`
+  (default every 5 min): a heads-up `SHIFT_START_REMINDER_MINUTES` (default
+  30) before their scheduled block starts, and a `/clockout` nudge right
+  after their block ends — sent only if they're still clocked in at that
+  point, so it stays quiet for anyone who already wrapped up on their own.
+
+A clipper needs at least one prior shift on record for the bot to know their
+Telegram user ID to DM — brand new roster additions won't get reminders
+until they've clocked in once manually. As with the admin DM, a clipper also
+needs to have started a DM with the bot at least once.
+
+**To update the roster** when the spreadsheet changes: re-export each day's
+hour flags into `WEEK1`/`WEEK2` in `src/schedule.js` (nickname → array of
+scheduled hours, 0–23, CET) and keep `USERNAME_MAP` in sync with each
+person's Telegram `@username`, then redeploy.
+
 ## Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather), grab the token.
@@ -86,7 +113,8 @@ message, or `/forceclockout @username`) closes their shift for them.
 4. Set the remaining env vars on the service: `BOT_TOKEN`, `ADMIN_ID`, and
    optionally `CHECKIN_INTERVAL_MINUTES`, `CHECKIN_GRACE_MINUTES`,
    `DAILY_REPORT_CRON`, `WEEKLY_REPORT_CRON`, `TZ`, `MAX_SHIFT_HOURS`,
-   `LONG_SHIFT_CHECK_CRON`.
+   `LONG_SHIFT_CHECK_CRON`, `SHIFT_START_REMINDER_MINUTES`,
+   `SCHEDULE_REMINDER_CRON`.
 5. Deploy. The bot calls `db.init()` on boot, so the schema (and any new
    columns) is created/migrated automatically — no manual migration step.
 
