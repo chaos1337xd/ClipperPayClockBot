@@ -13,6 +13,7 @@ owner.
 - `/whosonshift` — see everyone currently clocked in, plus who's scheduled to
   be on shift right now per the roster (✅ scheduled + clocked in, ⚠️
   scheduled but not clocked in)
+- `/schedule` — see the full roster for today (CET, all blocks)
 - `/myhistory` — see your last 10 completed shifts
 - `/checkins [@user]` — (admin only) see status-check timestamps (sent +
   confirmed) for a clipper's current or most recent shift
@@ -50,6 +51,12 @@ via `uncaughtException`/`unhandledRejection` handlers — so an outage or a
 stuck restart shows up immediately instead of only being noticeable once
 check-ins silently stop.
 
+On startup, `bot.launch()` retries with a 10s backoff (up to 6 attempts) if
+Telegram returns a 409 Conflict — this happens on a normal redeploy when the
+old container hasn't fully released its polling connection yet before the
+new one starts. Without the retry this looked like a genuine crash (and
+would show up as one via the DM above); it's now ridden out quietly instead.
+
 ## Reports
 
 Once a day (`DAILY_REPORT_CRON`, default midnight in `TZ`) and once a week
@@ -77,6 +84,7 @@ number → WEEK1, even → WEEK2). It powers two things:
 
 - `/whosonshift`'s "Scheduled now" section (who's supposed to be on, cross-
   referenced against who's actually clocked in).
+- `/schedule` — the full roster for the current CET calendar day.
 - Two automatic DMs to each clipper, checked every `SCHEDULE_REMINDER_CRON`
   (default every 5 min): a heads-up `SHIFT_START_REMINDER_MINUTES` (default
   30) before their scheduled block starts, and a `/clockout` nudge right
@@ -87,6 +95,19 @@ A clipper needs at least one prior shift on record for the bot to know their
 Telegram user ID to DM — brand new roster additions won't get reminders
 until they've clocked in once manually. As with the admin DM, a clipper also
 needs to have started a DM with the bot at least once.
+
+Each reminder is claimed in the database (`schedule_reminders` table, one
+row per clipper/occurrence/type) before it's sent, not just tracked in
+memory — so a bot restart mid-shift can't cause a duplicate reminder, and a
+reminder whose window has already passed during downtime is simply skipped
+rather than fired late or flooded on recovery.
+
+An overnight block that ends at midnight and picks back up at 00:00 the next
+day (e.g. a 22:00–04:00 shift, which the sheet represents as two separate
+day-rows) is treated as one continuous shift, not two — both for reminders
+(no false "shift ended" ping at the midnight seam) and for `/schedule`'s
+display (shown as `22:00–04:00 (+1d)` instead of looking truncated at
+`22:00–24:00`).
 
 **To update the roster** when the spreadsheet changes: re-export each day's
 hour flags into `WEEK1`/`WEEK2` in `src/schedule.js` (nickname → array of

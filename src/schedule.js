@@ -210,14 +210,73 @@ function getScheduledNow(date = new Date()) {
   return scheduleForCetDay(year, month, day).filter((e) => hour >= e.startHour && hour < e.endHour);
 }
 
+// The full day's roster, sorted by start time, for the CET calendar day
+// containing `date` (default now) — used by /schedule. A block ending
+// exactly at midnight is extended into tomorrow's continuation (same
+// person's block starting at 00:00) so it displays as one real shift
+// instead of looking truncated at "24:00" — endHour can be >24 in that
+// case (e.g. 28 = 04:00 the next day); callers should treat endHour > 24
+// as "ends the following day" when formatting.
+function getScheduleForCetDate(date = new Date()) {
+  const { year, month, day, dayIdx } = cetPartsOf(date);
+  const dayName = DAY_NAMES[dayIdx];
+  const week = isoWeekNumber(Date.UTC(year, month, day));
+
+  const tomorrow = new Date(Date.UTC(year, month, day + 1));
+  const tomorrowEntries = scheduleForCetDay(tomorrow.getUTCFullYear(), tomorrow.getUTCMonth(), tomorrow.getUTCDate());
+
+  const entries = scheduleForCetDay(year, month, day)
+    .map((entry) => {
+      if (entry.endHour !== 24) return entry;
+      const continuation = tomorrowEntries.find((e) => e.username === entry.username && e.startHour === 0);
+      return continuation ? { ...entry, endHour: 24 + continuation.endHour } : entry;
+    })
+    .sort((a, b) => a.startHour - b.startHour);
+
+  return { dayName, weekParity: week % 2 === 1 ? 'odd' : 'even', entries };
+}
+
+// A person's block on one day can end exactly at midnight and pick back up
+// at 00:00 the next day (e.g. a 22:00-04:00 overnight shift shows as two
+// separate day-rows in the sheet: [22,23] today, [0,1,2,3] tomorrow). Those
+// are one continuous shift, not two — merge any occurrence whose end lands
+// exactly on the next one's start (same person) so reminder logic doesn't
+// fire a false "shift ended" at the midnight seam, or a redundant "starting
+// soon" for a shift they're already clocked in for.
+function mergeMidnightContinuations(occurrences) {
+  const byUser = new Map();
+  for (const occ of occurrences) {
+    if (!byUser.has(occ.username)) byUser.set(occ.username, []);
+    byUser.get(occ.username).push(occ);
+  }
+
+  const merged = [];
+  for (const list of byUser.values()) {
+    list.sort((a, b) => a.start.getTime() - b.start.getTime());
+    let current = null;
+    for (const occ of list) {
+      if (current && occ.start.getTime() === current.end.getTime()) {
+        current.end = occ.end;
+        current.endHour = occ.endHour;
+      } else {
+        if (current) merged.push(current);
+        current = { ...occ };
+      }
+    }
+    if (current) merged.push(current);
+  }
+  return merged;
+}
+
 // All block start/end occurrences (as absolute Date objects) for the CET
-// calendar days spanning [-1, +1] around `date` — wide enough to safely
-// catch any start/end within a same-day lookahead/lookbehind window,
-// including across a midnight boundary.
+// calendar days spanning [-1, +2] around `date` — wide enough to safely
+// catch any start/end within a same-day lookahead/lookbehind window
+// (including across a midnight boundary) with room either side to resolve
+// a midnight-continuation merge.
 function getBlockOccurrencesAround(date = new Date()) {
   const { year, month, day } = cetPartsOf(date);
   const occurrences = [];
-  for (const offset of [-1, 0, 1]) {
+  for (const offset of [-1, 0, 1, 2]) {
     const d = new Date(Date.UTC(year, month, day + offset));
     const y = d.getUTCFullYear();
     const m = d.getUTCMonth();
@@ -233,11 +292,12 @@ function getBlockOccurrencesAround(date = new Date()) {
       });
     }
   }
-  return occurrences;
+  return mergeMidnightContinuations(occurrences);
 }
 
 module.exports = {
   USERNAME_MAP,
   getScheduledNow,
   getBlockOccurrencesAround,
+  getScheduleForCetDate,
 };

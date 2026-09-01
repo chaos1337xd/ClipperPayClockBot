@@ -213,6 +213,18 @@ bot.command('whosonshift', async (ctx) => {
   await ctx.reply(lines.join('\n'), HTML);
 });
 
+bot.command('schedule', async (ctx) => {
+  const { dayName, weekParity, entries } = schedule.getScheduleForCetDate();
+  if (entries.length === 0) {
+    return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}).`, HTML);
+  }
+  const lines = entries.map((e) => {
+    const nextDay = e.endHour > 24 ? ' (+1d)' : '';
+    return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · @${escapeHtml(e.username)}`;
+  });
+  await ctx.reply(`<b>Schedule — ${dayName} (week ${weekParity})</b>\n${lines.join('\n')}`, HTML);
+});
+
 bot.command('myhistory', async (ctx) => {
   const shifts = await db.getUserShiftHistory(ctx.from.id, 10);
   if (shifts.length === 0) {
@@ -275,6 +287,7 @@ bot.command('help', async (ctx) => {
       '<code>/clockout</code> — end your shift',
       '<code>/status [@user]</code> — see your (or their) current shift length',
       '<code>/whosonshift</code> — see who is currently clocked in',
+      '<code>/schedule</code> — see today\'s roster',
       '<code>/myhistory</code> — see your last 10 completed shifts',
       ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
       ADMIN_ID ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
@@ -356,57 +369,55 @@ function padHour(h) {
   return `${String(((h % 24) + 24) % 24).padStart(2, '0')}:00`;
 }
 
-// Dedup so the wide check windows below don't double-send across ticks.
-// Cleared implicitly on restart — worst case a duplicate reminder right
-// after a redeploy, which is harmless at this scale.
-const remindedStarts = new Set();
-const remindedEnds = new Set();
-
+// Dedup is claimed in the database (db.claimScheduleReminder) rather than
+// kept in memory — an in-memory Set resets on every restart, so a restart
+// landing inside the same check window as an already-sent reminder would
+// resend it. A DB claim survives restarts: whichever process (this one, or
+// the one before a crash) claims an occurrence first is the only one that
+// ever sends it.
 async function checkScheduleReminders() {
   const now = new Date();
   const occurrences = schedule.getBlockOccurrencesAround(now);
 
   for (const occ of occurrences) {
     const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
-    const startKey = `${occ.username}_${occ.start.toISOString()}_start`;
-    if (
-      startDeltaMin <= SHIFT_START_REMINDER_MINUTES &&
-      startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6 &&
-      !remindedStarts.has(startKey)
-    ) {
-      remindedStarts.add(startKey);
-      const userId = await db.getUserIdByUsername(occ.username);
-      if (!userId) {
-        console.warn(`No known Telegram user for scheduled username @${occ.username} — skipping start reminder.`);
-        continue;
-      }
-      try {
-        await bot.telegram.sendMessage(
-          userId,
-          `⏰ You're scheduled on shift in ~${SHIFT_START_REMINDER_MINUTES} min — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. Don't forget to <code>/clockin</code> when you start!`,
-          HTML
-        );
-      } catch (e) {
-        console.error(`Failed to send start reminder to @${occ.username}`, e);
+    if (startDeltaMin <= SHIFT_START_REMINDER_MINUTES && startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6) {
+      const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start');
+      if (claimed) {
+        const userId = await db.getUserIdByUsername(occ.username);
+        if (!userId) {
+          console.warn(`No known Telegram user for scheduled username @${occ.username} — skipping start reminder.`);
+        } else {
+          try {
+            await bot.telegram.sendMessage(
+              userId,
+              `⏰ You're scheduled on shift in ~${SHIFT_START_REMINDER_MINUTES} min — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. Don't forget to <code>/clockin</code> when you start!`,
+              HTML
+            );
+          } catch (e) {
+            console.error(`Failed to send start reminder to @${occ.username}`, e);
+          }
+        }
       }
     }
 
     const endDeltaMin = (occ.end.getTime() - now.getTime()) / 60000;
-    const endKey = `${occ.username}_${occ.end.toISOString()}_end`;
-    if (endDeltaMin <= 0 && endDeltaMin > -6 && !remindedEnds.has(endKey)) {
-      remindedEnds.add(endKey);
-      const userId = await db.getUserIdByUsername(occ.username);
-      if (!userId) continue;
-      const stillClockedIn = await db.getOpenShift(userId);
-      if (!stillClockedIn) continue;
-      try {
-        await bot.telegram.sendMessage(
-          userId,
-          `🛑 Your scheduled shift (<b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>) just wrapped up. Don't forget to <code>/clockout</code>!`,
-          HTML
-        );
-      } catch (e) {
-        console.error(`Failed to send end reminder to @${occ.username}`, e);
+    if (endDeltaMin <= 0 && endDeltaMin > -6) {
+      const claimed = await db.claimScheduleReminder(occ.username, occ.end, 'end');
+      if (claimed) {
+        const userId = await db.getUserIdByUsername(occ.username);
+        const stillClockedIn = userId ? await db.getOpenShift(userId) : null;
+        if (userId && stillClockedIn) {
+          try {
+            await bot.telegram.sendMessage(
+              userId,
+              `🛑 Your scheduled shift (<b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>) just wrapped up. Don't forget to <code>/clockout</code>!`,
+              HTML
+            );
+          } catch (e) {
+            console.error(`Failed to send end reminder to @${occ.username}`, e);
+          }
+        }
       }
     }
   }
@@ -426,6 +437,30 @@ async function resumeActiveShifts() {
   }
 
   return open.length;
+}
+
+// On redeploy, Telegram can take a few seconds after the old container
+// stops polling before it actually releases the getUpdates lock — if
+// Railway spins up the new container faster than that, launch() gets a
+// 409 Conflict. Retrying with a delay rides out that window instead of
+// treating it as fatal, which previously caused a crash-restart-crash
+// loop tight enough to burn through Railway's restart budget during what
+// should've been an ordinary deploy.
+async function launchWithRetry(maxAttempts = 6, delayMs = 10000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await bot.launch();
+      return;
+    } catch (e) {
+      const isConflict = e?.response?.error_code === 409;
+      if (isConflict && attempt < maxAttempts) {
+        console.warn(`getUpdates conflict on launch (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs / 1000}s`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 async function main() {
@@ -482,6 +517,7 @@ async function main() {
     { command: 'clockout', description: 'End your shift' },
     { command: 'status', description: 'See shift length (yours or @user)' },
     { command: 'whosonshift', description: 'See who is currently clocked in' },
+    { command: 'schedule', description: "See today's roster" },
     { command: 'myhistory', description: 'See your last 10 shifts' },
     { command: 'checkins', description: 'Admin: see status-check timestamps for a shift' },
     { command: 'report', description: "Admin: get today's report on demand" },
@@ -491,7 +527,7 @@ async function main() {
     { command: 'help', description: 'List commands' },
   ]);
 
-  await bot.launch();
+  await launchWithRetry();
   console.log('Bot started.');
   await notifyAdmin(`🟢 Bot online — resumed <b>${resumedCount}</b> active shift(s).`);
 }

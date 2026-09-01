@@ -36,6 +36,14 @@ async function init() {
       status TEXT NOT NULL DEFAULT 'pending' -- pending | confirmed | missed
     );
 
+    CREATE TABLE IF NOT EXISTS schedule_reminders (
+      username TEXT NOT NULL,
+      occurrence_at TIMESTAMPTZ NOT NULL,
+      type TEXT NOT NULL, -- 'start' | 'end'
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (username, occurrence_at, type)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_shifts_open ON shifts (user_id) WHERE clock_out IS NULL;
     CREATE INDEX IF NOT EXISTS idx_checkins_pending ON checkins (status) WHERE status = 'pending';
 
@@ -62,6 +70,18 @@ async function getOpenShiftByUsername(username) {
     [username]
   );
   return rows[0] || null;
+}
+
+// Atomically claims a (username, occurrence, type) reminder slot — returns
+// true if this call is the one that gets to send it, false if it was
+// already sent (by an earlier tick or a prior process, including across a
+// restart, since this is persisted rather than kept in memory).
+async function claimScheduleReminder(username, occurrenceAt, type) {
+  const { rowCount } = await pool.query(
+    `INSERT INTO schedule_reminders (username, occurrence_at, type) VALUES (lower($1), $2, $3) ON CONFLICT DO NOTHING`,
+    [username, occurrenceAt, type]
+  );
+  return rowCount > 0;
 }
 
 async function getUserIdByUsername(username) {
@@ -241,6 +261,7 @@ module.exports = {
   getOpenShiftByUsername,
   getMostRecentShiftByUsername,
   getUserIdByUsername,
+  claimScheduleReminder,
   updateOpenShiftsChatId,
   getUserShiftHistory,
   getLastCheckinSentAt,
