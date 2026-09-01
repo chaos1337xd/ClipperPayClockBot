@@ -28,6 +28,10 @@ if (!ADMIN_ID) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
+// Fetched once in main() via getMe() — used to point clippers at the right
+// chat when they run /clockin in the group instead of DMing the bot.
+let botUsername = null;
+
 function displayNameOf(from) {
   return [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || String(from.id);
 }
@@ -96,12 +100,30 @@ async function notifyAdmin(text) {
 }
 
 bot.command('clockin', async (ctx) => {
+  if (ctx.chat.type !== 'private') {
+    const link = botUsername ? ` (@${botUsername})` : '';
+    return ctx.reply(`Clock in over DM, not here — message me${link} privately and run /clockin there.`);
+  }
   const userId = ctx.from.id;
   const existing = await db.getOpenShift(userId);
   if (existing) {
     return ctx.reply(`You're already clocked in (since <b>${fmtLocal(existing.clock_in)}</b>).`, HTML);
   }
-  const shift = await db.createShift(userId, ctx.from.username || null, displayNameOf(ctx.from), ctx.chat.id);
+  let shift;
+  try {
+    shift = await db.createShift(userId, ctx.from.username || null, displayNameOf(ctx.from), ctx.chat.id);
+  } catch (e) {
+    if (e.code === '23505') {
+      // Lost a race with a near-simultaneous /clockin (double-tap, a
+      // retried update) — the DB's unique index caught it, so just report
+      // whichever shift won.
+      const raceShift = await db.getOpenShift(userId);
+      if (raceShift) {
+        return ctx.reply(`You're already clocked in (since <b>${fmtLocal(raceShift.clock_in)}</b>).`, HTML);
+      }
+    }
+    throw e;
+  }
   await scheduler.startShiftChecks(bot, shift);
   await ctx.reply(
     `✅ ${fromTag(ctx.from)} clocked in. Status checks every <b>${scheduler.CHECKIN_INTERVAL_MS / 60000}</b> min — tap the button when prompted.`,
@@ -187,7 +209,7 @@ bot.command('status', async (ctx) => {
 
 bot.command('whosonshift', async (ctx) => {
   const open = await db.getAllOpenShifts();
-  const openByUsername = new Map(open.filter((s) => s.username).map((s) => [s.username.toLowerCase(), s]));
+  const openByUserId = new Map(open.map((s) => [s.user_id, s]));
 
   const lines = [];
   if (open.length === 0) {
@@ -205,7 +227,7 @@ bot.command('whosonshift', async (ctx) => {
     lines.push('');
     lines.push('<b>Scheduled now</b>');
     for (const entry of scheduled) {
-      const isOn = openByUsername.has(entry.username.toLowerCase());
+      const isOn = openByUserId.has(entry.userId);
       lines.push(`${isOn ? '✅' : '⚠️'} @${escapeHtml(entry.username)}${isOn ? '' : ' — not clocked in'}`);
     }
   }
@@ -223,6 +245,27 @@ bot.command('schedule', async (ctx) => {
     return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · @${escapeHtml(e.username)}`;
   });
   await ctx.reply(`<b>Schedule — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
+});
+
+bot.command('whensmynextshift', async (ctx) => {
+  const result = schedule.getNextShiftForUser(ctx.from.id);
+
+  if (result.status === 'none') {
+    return ctx.reply("You're not on the roster, so there's no schedule for you.");
+  }
+  if (result.status === 'now') {
+    return ctx.reply(
+      `You're scheduled right now — until <b>${padHour(result.entry.endHour)} CET</b>. Clock in if you haven't!`,
+      HTML
+    );
+  }
+
+  const secondsUntil = (result.start.getTime() - Date.now()) / 1000;
+  const nextDay = result.endHour > 24 ? ' (+1d)' : '';
+  await ctx.reply(
+    `Your next shift starts in <b>${formatDuration(secondsUntil)}</b> — <b>${padHour(result.startHour)}–${padHour(result.endHour)}${nextDay} CET</b>.`,
+    HTML
+  );
 });
 
 bot.command('myhistory', async (ctx) => {
@@ -288,6 +331,7 @@ bot.command('help', async (ctx) => {
       '<code>/status [@user]</code> — see your (or their) current shift length',
       '<code>/whosonshift</code> — see who is currently clocked in',
       '<code>/schedule</code> — see today\'s roster',
+      '<code>/whensmynextshift</code> — see how long until your next scheduled shift',
       '<code>/myhistory</code> — see your last 10 completed shifts',
       ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
       ADMIN_ID ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
@@ -330,7 +374,11 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('Too late — this check-in already expired.');
   }
 
-  await ctx.editMessageText(`✅ ${nameTag(shift)} confirmed presence.`, HTML);
+  try {
+    await ctx.editMessageText(`✅ ${nameTag(shift)} confirmed presence.`, HTML);
+  } catch (e) {
+    console.error('Failed to edit confirmed check-in message', checkinId, e);
+  }
   await ctx.answerCbQuery("Confirmed, thanks!");
 });
 
@@ -384,19 +432,14 @@ async function checkScheduleReminders() {
     if (startDeltaMin <= SHIFT_START_REMINDER_MINUTES && startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6) {
       const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start');
       if (claimed) {
-        const userId = await db.getUserIdByUsername(occ.username);
-        if (!userId) {
-          console.warn(`No known Telegram user for scheduled username @${occ.username} — skipping start reminder.`);
-        } else {
-          try {
-            await bot.telegram.sendMessage(
-              userId,
-              `⏰ You're scheduled on shift in ~${SHIFT_START_REMINDER_MINUTES} min — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. Don't forget to <code>/clockin</code> when you start!`,
-              HTML
-            );
-          } catch (e) {
-            console.error(`Failed to send start reminder to @${occ.username}`, e);
-          }
+        try {
+          await bot.telegram.sendMessage(
+            occ.userId,
+            `⏰ You're scheduled on shift in ~${SHIFT_START_REMINDER_MINUTES} min — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. Don't forget to <code>/clockin</code> when you start!`,
+            HTML
+          );
+        } catch (e) {
+          console.error(`Failed to send start reminder to @${occ.username}`, e);
         }
       }
     }
@@ -405,12 +448,11 @@ async function checkScheduleReminders() {
     if (endDeltaMin <= 0 && endDeltaMin > -6) {
       const claimed = await db.claimScheduleReminder(occ.username, occ.end, 'end');
       if (claimed) {
-        const userId = await db.getUserIdByUsername(occ.username);
-        const stillClockedIn = userId ? await db.getOpenShift(userId) : null;
-        if (userId && stillClockedIn) {
+        const stillClockedIn = await db.getOpenShift(occ.userId);
+        if (stillClockedIn) {
           try {
             await bot.telegram.sendMessage(
-              userId,
+              occ.userId,
               `🛑 Your scheduled shift (<b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>) just wrapped up. Don't forget to <code>/clockout</code>!`,
               HTML
             );
@@ -467,6 +509,13 @@ async function main() {
   await db.init();
   const resumedCount = await resumeActiveShifts();
 
+  try {
+    const me = await bot.telegram.getMe();
+    botUsername = me.username;
+  } catch (e) {
+    console.warn('Could not fetch bot username via getMe()', e);
+  }
+
   if (ADMIN_ID) {
     cron.schedule(
       DAILY_REPORT_CRON,
@@ -518,6 +567,7 @@ async function main() {
     { command: 'status', description: 'See shift length (yours or @user)' },
     { command: 'whosonshift', description: 'See who is currently clocked in' },
     { command: 'schedule', description: "See today's roster" },
+    { command: 'whensmynextshift', description: 'See how long until your next shift' },
     { command: 'myhistory', description: 'See your last 10 shifts' },
     { command: 'checkins', description: 'Admin: see status-check timestamps for a shift' },
     { command: 'report', description: "Admin: get today's report on demand" },

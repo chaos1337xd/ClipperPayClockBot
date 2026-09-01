@@ -1,19 +1,25 @@
 # clipper-payclock
 
-A Telegram bot that tracks clipper shifts in a group chat: clock in/out, periodic
+A Telegram bot that tracks clipper shifts: clock in/out over DM, periodic
 "are you still here" status checks with a tap-to-confirm button, and a daily
 summary report (hours worked + missed check-ins) sent privately to the bot
 owner.
 
 ## Commands
 
-- `/clockin` — start your shift
-- `/clockout` — end your shift (auto-expires any check-in still pending)
+- `/clockin` — start your shift. **Must be run in a private DM with the
+  bot**, not the group — running it in the group just tells you to DM
+  instead and does nothing else, since the shift's check-ins get sent to
+  whichever chat you ran `/clockin` from.
+- `/clockout` — end your shift (auto-expires any check-in still pending);
+  works from anywhere, since it just closes your existing shift record
 - `/status [@user]` — see how long you (or someone else) have been clocked in
 - `/whosonshift` — see everyone currently clocked in, plus who's scheduled to
   be on shift right now per the roster (✅ scheduled + clocked in, ⚠️
   scheduled but not clocked in)
 - `/schedule` — see the full roster for today (CET, all blocks)
+- `/whensmynextshift` — see how long until your next scheduled block (or
+  that you're on right now)
 - `/myhistory` — see your last 10 completed shifts
 - `/checkins [@user]` — (admin only) see status-check timestamps (sent +
   confirmed) for a clipper's current or most recent shift
@@ -27,13 +33,16 @@ owner.
 
 ## How status checks work
 
-While a clipper is clocked in, the bot posts a message in the group every
-`CHECKIN_INTERVAL_MINUTES` (default 30) tagging them with an inline
+While a clipper is clocked in, the bot posts a message every
+`CHECKIN_INTERVAL_MINUTES` (default 30) in whichever chat they ran
+`/clockin` from — a private DM, per the note above — with an inline
 "✅ I'm here" button. They have `CHECKIN_GRACE_MINUTES` (default 5) to press
 it. If they don't, it's logged as a missed check-in — the clipper stays
-clocked in (nothing is auto-closed), and it shows up in the daily report.
-Multiple clippers can be on shift at once; each gets their own independent
-check-in schedule.
+clocked in (nothing is auto-closed), it shows up in the daily report, and
+the admin gets an immediate DM (`⚠️ ... missed a status check`), since a
+missed check-in over DM isn't otherwise visible to anyone but the clipper
+themselves. Multiple clippers can be on shift at once; each gets their own
+independent check-in schedule.
 
 If the bot restarts, active shifts are picked back up from the database and
 their check-in schedules resume automatically. Timing is anchored to the
@@ -75,26 +84,41 @@ clocking out, the admin gets a one-time DM warning — usually means someone
 forgot to run `/clockout`. From there, `/forceclockout` (reply to their
 message, or `/forceclockout @username`) closes their shift for them.
 
+## Data integrity
+
+A unique DB index (`idx_shifts_one_open_per_user`) enforces at most one open
+shift per person at the database level, not just in application code — a
+double-tap on `/clockin` or a retried Telegram update can't create two
+concurrent open shifts for the same clipper (which would otherwise silently
+split their hours across two rows and let one of them run forever, invisible
+to `/clockout`).
+
 ## Roster / schedule reminders
 
-[`src/schedule.js`](src/schedule.js) holds a static roster parsed from the
-team's rota spreadsheet: fixed-CET (UTC+1, no DST) hourly slots per person,
-per day, alternating between two weekly blocks by ISO week parity (odd week
-number → WEEK1, even → WEEK2). It powers two things:
+[`src/schedule.js`](src/schedule.js) holds a static roster (`ROSTER`) parsed
+from the team's rota spreadsheet: fixed-CET (UTC+1, no DST) hourly slots per
+person, per day, alternating between two weekly blocks by ISO week parity
+(odd week number → WEEK1, even → WEEK2). Each roster entry carries both the
+person's `@username` and their numeric Telegram user ID directly — reminders
+DM the ID straight from the roster rather than looking it up from shift
+history, so a brand new roster addition gets reminders immediately (no need
+to clock in once first) and nothing breaks if someone later renames their
+`@username`. It powers:
 
 - `/whosonshift`'s "Scheduled now" section (who's supposed to be on, cross-
-  referenced against who's actually clocked in).
+  referenced by user ID against who's actually clocked in).
 - `/schedule` — the full roster for the current CET calendar day.
+- `/whensmynextshift` — how long until the caller's next block (or that
+  they're on one right now).
 - Two automatic DMs to each clipper, checked every `SCHEDULE_REMINDER_CRON`
   (default every 5 min): a heads-up `SHIFT_START_REMINDER_MINUTES` (default
   30) before their scheduled block starts, and a `/clockout` nudge right
   after their block ends — sent only if they're still clocked in at that
   point, so it stays quiet for anyone who already wrapped up on their own.
 
-A clipper needs at least one prior shift on record for the bot to know their
-Telegram user ID to DM — brand new roster additions won't get reminders
-until they've clocked in once manually. As with the admin DM, a clipper also
-needs to have started a DM with the bot at least once.
+A clipper still needs to have started a DM with the bot at least once for
+any of this to reach them — same requirement as the admin DM, Telegram bots
+can't message someone first.
 
 Each reminder is claimed in the database (`schedule_reminders` table, one
 row per clipper/occurrence/type) before it's sent, not just tracked in
@@ -111,8 +135,9 @@ display (shown as `22:00–04:00 (+1d)` instead of looking truncated at
 
 **To update the roster** when the spreadsheet changes: re-export each day's
 hour flags into `WEEK1`/`WEEK2` in `src/schedule.js` (nickname → array of
-scheduled hours, 0–23, CET) and keep `USERNAME_MAP` in sync with each
-person's Telegram `@username`, then redeploy.
+scheduled hours, 0–23, CET). **For a new person**, add them to `ROSTER` with
+both their `@username` and numeric Telegram user ID (get the ID by having
+them message [@userinfobot](https://t.me/userinfobot)), then redeploy.
 
 ## Setup
 

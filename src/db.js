@@ -44,10 +44,17 @@ async function init() {
       PRIMARY KEY (username, occurrence_at, type)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_shifts_open ON shifts (user_id) WHERE clock_out IS NULL;
     CREATE INDEX IF NOT EXISTS idx_checkins_pending ON checkins (status) WHERE status = 'pending';
 
     ALTER TABLE shifts ADD COLUMN IF NOT EXISTS long_shift_warned BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Enforces at most one open shift per user at the DB level, closing a
+    -- race where two near-simultaneous /clockin calls (double-tap, a
+    -- retried Telegram update) both pass the JS-side "already clocked in?"
+    -- check before either INSERT commits, creating two open shifts for the
+    -- same person. Replaces the old non-unique idx_shifts_open.
+    DROP INDEX IF EXISTS idx_shifts_open;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open_per_user ON shifts (user_id) WHERE clock_out IS NULL;
   `);
 }
 
@@ -82,14 +89,6 @@ async function claimScheduleReminder(username, occurrenceAt, type) {
     [username, occurrenceAt, type]
   );
   return rowCount > 0;
-}
-
-async function getUserIdByUsername(username) {
-  const { rows } = await pool.query(
-    `SELECT user_id FROM shifts WHERE lower(username) = lower($1) ORDER BY clock_in DESC LIMIT 1`,
-    [username]
-  );
-  return rows[0]?.user_id || null;
 }
 
 async function updateOpenShiftsChatId(oldChatId, newChatId) {
@@ -260,7 +259,6 @@ module.exports = {
   getAllOpenShifts,
   getOpenShiftByUsername,
   getMostRecentShiftByUsername,
-  getUserIdByUsername,
   claimScheduleReminder,
   updateOpenShiftsChatId,
   getUserShiftHistory,

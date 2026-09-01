@@ -5,16 +5,20 @@
 //
 // To update the roster: re-export the sheet's hour flags per day/person
 // into WEEK1/WEEK2 below (nickname -> array of scheduled hours, 0-23,
-// CET), and keep USERNAME_MAP in sync with each person's Telegram
-// @username.
-
-const USERNAME_MAP = {
-  Adko: 'Adko04',
-  Draco: 'sp3ade',
-  Manger: 'Mangerhom',
-  Bla: 'bla2k',
-  Anthony: 'antoniusrisen',
-  Neo: 'neoboller',
+// CET), and keep ROSTER in sync with each person's Telegram @username and
+// numeric user ID.
+//
+// userId is stored directly here (not resolved from shift history at
+// runtime) so reminders work even for someone who hasn't clocked in yet,
+// and keep working if they later rename their @username — get a fresh ID
+// from https://t.me/userinfobot if someone new joins the roster.
+const ROSTER = {
+  Adko: { username: 'Adko04', userId: 1632388627 },
+  Draco: { username: 'sp3ade', userId: 7064498111 },
+  Manger: { username: 'Mangerhom', userId: 1642743726 },
+  Bla: { username: 'bla2k', userId: 5996362594 },
+  Anthony: { username: 'antoniusrisen', userId: 5840527193 },
+  Neo: { username: 'neoboller', userId: 8219882001 },
 };
 
 const WEEK1 = {
@@ -186,7 +190,8 @@ function cetToUtcDate(year, month, day, hour) {
 }
 
 // Returns the roster for a specific CET calendar day: [{ nickname,
-// username, startHour, endHour }], endHour possibly 24 (rolls to midnight).
+// username, userId, startHour, endHour }], endHour possibly 24 (rolls to
+// midnight).
 function scheduleForCetDay(year, month, day) {
   const dayIdx = new Date(Date.UTC(year, month, day)).getUTCDay();
   const dayName = DAY_NAMES[dayIdx];
@@ -196,9 +201,9 @@ function scheduleForCetDay(year, month, day) {
   const entries = [];
   for (const [nickname, hours] of Object.entries(weekData)) {
     for (const [startHour, endHour] of toBlocks(hours)) {
-      const username = USERNAME_MAP[nickname];
-      if (!username) continue;
-      entries.push({ nickname, username, startHour, endHour });
+      const person = ROSTER[nickname];
+      if (!person) continue;
+      entries.push({ nickname, username: person.username, userId: person.userId, startHour, endHour });
     }
   }
   return entries;
@@ -208,6 +213,37 @@ function scheduleForCetDay(year, month, day) {
 function getScheduledNow(date = new Date()) {
   const { year, month, day, hour } = cetPartsOf(date);
   return scheduleForCetDay(year, month, day).filter((e) => hour >= e.startHour && hour < e.endHour);
+}
+
+// For /whensmynextshift: either they're on shift right now
+// ({ status: 'now', entry }), their next upcoming block within the next 14
+// days — a full rotation, since the roster alternates weekly
+// ({ status: 'upcoming', start, end, ...entry }), or they're not on the
+// roster at all ({ status: 'none' }).
+function getNextShiftForUser(userId, from = new Date()) {
+  const nowMs = from.getTime();
+  const { year, month, day, hour } = cetPartsOf(from);
+
+  const todaysBlocks = scheduleForCetDay(year, month, day).filter((e) => e.userId === userId);
+  const current = todaysBlocks.find((e) => hour >= e.startHour && hour < e.endHour);
+  if (current) return { status: 'now', entry: current };
+
+  for (let offset = 0; offset <= 14; offset++) {
+    const d = new Date(Date.UTC(year, month, day + offset));
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const dd = d.getUTCDate();
+
+    const candidates = scheduleForCetDay(y, m, dd)
+      .filter((e) => e.userId === userId)
+      .map((e) => ({ ...e, start: cetToUtcDate(y, m, dd, e.startHour), end: cetToUtcDate(y, m, dd, e.endHour) }))
+      .filter((e) => e.start.getTime() > nowMs)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    if (candidates.length > 0) return { status: 'upcoming', ...candidates[0] };
+  }
+
+  return { status: 'none' };
 }
 
 // The full day's roster, sorted by start time, for the CET calendar day
@@ -284,6 +320,7 @@ function getBlockOccurrencesAround(date = new Date()) {
     for (const entry of scheduleForCetDay(y, m, dd)) {
       occurrences.push({
         username: entry.username,
+        userId: entry.userId,
         nickname: entry.nickname,
         startHour: entry.startHour,
         endHour: entry.endHour,
@@ -296,8 +333,9 @@ function getBlockOccurrencesAround(date = new Date()) {
 }
 
 module.exports = {
-  USERNAME_MAP,
+  ROSTER,
   getScheduledNow,
   getBlockOccurrencesAround,
   getScheduleForCetDate,
+  getNextShiftForUser,
 };
