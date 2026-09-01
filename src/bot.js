@@ -216,13 +216,13 @@ bot.command('whosonshift', async (ctx) => {
 bot.command('schedule', async (ctx) => {
   const { dayName, weekParity, entries } = schedule.getScheduleForCetDate();
   if (entries.length === 0) {
-    return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}).`, HTML);
+    return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}). Times are CET.`, HTML);
   }
   const lines = entries.map((e) => {
     const nextDay = e.endHour > 24 ? ' (+1d)' : '';
     return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · @${escapeHtml(e.username)}`;
   });
-  await ctx.reply(`<b>Schedule — ${dayName} (week ${weekParity})</b>\n${lines.join('\n')}`, HTML);
+  await ctx.reply(`<b>Schedule — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
 });
 
 bot.command('myhistory', async (ctx) => {
