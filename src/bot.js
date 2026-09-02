@@ -236,6 +236,10 @@ bot.command('whosonshift', async (ctx) => {
 });
 
 bot.command('schedule', async (ctx) => {
+  if (ctx.chat.type !== 'private') {
+    const link = botUsername ? ` (@${botUsername})` : '';
+    return ctx.reply(`Run this one in DM, not here — it @mentions the whole roster. Message me${link} privately.`);
+  }
   const { dayName, weekParity, entries } = schedule.getScheduleForCetDate();
   if (entries.length === 0) {
     return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}). Times are CET.`, HTML);
