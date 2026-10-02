@@ -326,6 +326,19 @@ bot.command('weeklyreport', async (ctx) => {
   await ctx.reply(report, HTML);
 });
 
+bot.command('monthlyreport', async (ctx) => {
+  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+    return ctx.reply("This command is admin-only.");
+  }
+  // Calendar month to date (1st at 00:00 in the process TZ), same
+  // setHours approach the daily report uses.
+  const since = new Date();
+  since.setDate(1);
+  since.setHours(0, 0, 0, 0);
+  const report = await buildReportText(since.toISOString(), 'Monthly');
+  await ctx.reply(report, HTML);
+});
+
 bot.command('help', async (ctx) => {
   await ctx.reply(
     [
@@ -340,6 +353,7 @@ bot.command('help', async (ctx) => {
       ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
       ADMIN_ID ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
       ADMIN_ID ? '<code>/weeklyreport</code> — (admin) get an on-demand weekly report' : null,
+      ADMIN_ID ? '<code>/monthlyreport</code> — (admin) get the month-to-date report' : null,
       ADMIN_ID ? '<code>/forceclockout @user</code> — (admin) clock someone out, reply to their message also works' : null,
       ADMIN_ID ? '<code>/checknow @user</code> — (admin) send an immediate status check, reply to their message also works' : null,
     ]
@@ -576,6 +590,7 @@ async function main() {
     { command: 'checkins', description: 'Admin: see status-check timestamps for a shift' },
     { command: 'report', description: "Admin: get today's report on demand" },
     { command: 'weeklyreport', description: 'Admin: get this week\'s report on demand' },
+    { command: 'monthlyreport', description: 'Admin: get the month-to-date report' },
     { command: 'forceclockout', description: 'Admin: clock a clipper out' },
     { command: 'checknow', description: 'Admin: send an immediate status check' },
     { command: 'help', description: 'List commands' },
