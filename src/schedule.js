@@ -18,7 +18,7 @@ const ROSTER = {
   Manger: { username: 'Mangerhom', userId: 1642743726 },
   Bla: { username: 'bla2k', userId: 5996362594 },
   Anthony: { username: 'antoniusrisen', userId: 5840527193 },
-  Neo: { username: 'ketolanossi', userId: 8953994254 },
+  CTC: { username: 'ketolanossi', userId: 8953994254 },
 };
 
 const WEEK1 = {
@@ -28,7 +28,7 @@ const WEEK1 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
     "Adko": [16, 17, 18, 19, 20, 21],
@@ -36,7 +36,7 @@ const WEEK1 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
     "Adko": [16, 17, 18, 19, 20, 21],
@@ -44,7 +44,7 @@ const WEEK1 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
     "Anthony": [4, 5, 6, 7, 8, 9],
-    "Neo": []
+    "CTC": []
   },
   "Thursday": {
     "Adko": [],
@@ -52,7 +52,7 @@ const WEEK1 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
     "Adko": [0, 1, 2, 3, 16, 17, 18, 19, 20, 21],
@@ -60,7 +60,7 @@ const WEEK1 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
     "Adko": [],
@@ -68,7 +68,7 @@ const WEEK1 = {
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
     "Anthony": [4, 5, 6, 7, 8, 9],
-    "Neo": [16, 17, 18, 19, 20, 21, 22, 23]
+    "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
     "Adko": [22, 23],
@@ -76,7 +76,7 @@ const WEEK1 = {
     "Manger": [],
     "Bla": [16, 17],
     "Anthony": [0, 1, 2, 3, 4, 5, 6, 7],
-    "Neo": []
+    "CTC": []
   }
 };
 
@@ -87,7 +87,7 @@ const WEEK2 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
     "Adko": [16, 17, 18, 19, 20, 21],
@@ -95,7 +95,7 @@ const WEEK2 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
     "Adko": [16, 17, 18, 19, 20, 21],
@@ -103,7 +103,7 @@ const WEEK2 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
     "Anthony": [4, 5, 6, 7, 8, 9],
-    "Neo": []
+    "CTC": []
   },
   "Thursday": {
     "Adko": [],
@@ -111,7 +111,7 @@ const WEEK2 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
     "Adko": [16, 17, 18, 19, 20, 21],
@@ -119,7 +119,7 @@ const WEEK2 = {
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
     "Anthony": [],
-    "Neo": [4, 5, 6, 7, 8, 9]
+    "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
     "Adko": [],
@@ -127,7 +127,7 @@ const WEEK2 = {
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
     "Anthony": [4, 5, 6, 7, 8, 9],
-    "Neo": [16, 17, 18, 19, 20, 21, 22, 23]
+    "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
     "Adko": [22, 23],
@@ -135,7 +135,7 @@ const WEEK2 = {
     "Manger": [],
     "Bla": [16, 17],
     "Anthony": [0, 1, 2, 3, 4, 5, 6, 7],
-    "Neo": []
+    "CTC": []
   }
 };
 
