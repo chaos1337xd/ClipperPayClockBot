@@ -18,7 +18,7 @@ const ROSTER = {
   Manger: { username: 'Mangerhom', userId: 1642743726 },
   Bla: { username: 'bla2k', userId: 5996362594 },
   Anthony: { username: 'antoniusrisen', userId: 5840527193 },
-  Neo: { username: 'neoboller', userId: 8219882001 },
+  Neo: { username: 'ketolanossi', userId: 8953994254 },
 };
 
 const WEEK1 = {
