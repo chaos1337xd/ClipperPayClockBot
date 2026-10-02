@@ -25,8 +25,7 @@ owner.
   confirmed) for a clipper's current or most recent shift
 - `/report` — (admin only) get today's report on demand
 - `/weeklyreport` — (admin only) get the trailing-7-days report on demand
-- `/monthlyreport` — (admin only) get the calendar-month-to-date report on
-  demand (1st of the month 00:00 in `TZ` through now)
+- `/monthlyreport` — (admin only) get the trailing-30-days report on demand
 - `/forceclockout @user` — (admin only) clock a clipper out; can also be used
   by replying to their message instead of naming them
 - `/checknow @user` — (admin only) send an immediate status check outside the
