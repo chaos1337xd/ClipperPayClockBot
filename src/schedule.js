@@ -8,16 +8,20 @@
 // CET), and keep ROSTER in sync with each person's Telegram @username and
 // numeric user ID.
 //
+// "Vacant" is an unfilled slot: it has no username/userId, so it shows up in
+// /schedule and /whosonshift but never gets reminders or "not clocked in"
+// warnings. Fill it by giving it a real username + userId (and renaming it).
+//
 // userId is stored directly here (not resolved from shift history at
 // runtime) so reminders work even for someone who hasn't clocked in yet,
 // and keep working if they later rename their @username — get a fresh ID
 // from https://t.me/userinfobot if someone new joins the roster.
 const ROSTER = {
   Adko: { username: 'Adko04', userId: 1632388627 },
-  Draco: { username: 'sp3ade', userId: 7064498111 },
+  Draco: { username: 'Draco212', userId: 7064498111 },
   Manger: { username: 'Mangerhom', userId: 1642743726 },
   Bla: { username: 'bla2k', userId: 5996362594 },
-  Anthony: { username: 'antoniusrisen', userId: 5840527193 },
+  Vacant: { username: null, userId: null },
   CTC: { username: 'ketolanossi', userId: 8953994254 },
 };
 
@@ -27,7 +31,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
@@ -35,7 +39,7 @@ const WEEK1 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
@@ -43,7 +47,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Anthony": [4, 5, 6, 7, 8, 9],
+    "Vacant": [4, 5, 6, 7, 8, 9],
     "CTC": []
   },
   "Thursday": {
@@ -51,7 +55,7 @@ const WEEK1 = {
     "Draco": [16, 17, 18, 19, 20, 21],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
@@ -59,7 +63,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
@@ -67,7 +71,7 @@ const WEEK1 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
-    "Anthony": [4, 5, 6, 7, 8, 9],
+    "Vacant": [4, 5, 6, 7, 8, 9],
     "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
@@ -75,7 +79,7 @@ const WEEK1 = {
     "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
     "Manger": [],
     "Bla": [16, 17],
-    "Anthony": [0, 1, 2, 3, 4, 5, 6, 7],
+    "Vacant": [0, 1, 2, 3, 4, 5, 6, 7],
     "CTC": []
   }
 };
@@ -86,7 +90,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
@@ -94,7 +98,7 @@ const WEEK2 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
@@ -102,7 +106,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Anthony": [4, 5, 6, 7, 8, 9],
+    "Vacant": [4, 5, 6, 7, 8, 9],
     "CTC": []
   },
   "Thursday": {
@@ -110,7 +114,7 @@ const WEEK2 = {
     "Draco": [16, 17, 18, 19, 20, 21],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
@@ -118,7 +122,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Anthony": [],
+    "Vacant": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
@@ -126,7 +130,7 @@ const WEEK2 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
-    "Anthony": [4, 5, 6, 7, 8, 9],
+    "Vacant": [4, 5, 6, 7, 8, 9],
     "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
@@ -134,7 +138,7 @@ const WEEK2 = {
     "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
     "Manger": [],
     "Bla": [16, 17],
-    "Anthony": [0, 1, 2, 3, 4, 5, 6, 7],
+    "Vacant": [0, 1, 2, 3, 4, 5, 6, 7],
     "CTC": []
   }
 };
