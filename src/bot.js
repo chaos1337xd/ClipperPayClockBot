@@ -227,6 +227,10 @@ bot.command('whosonshift', async (ctx) => {
     lines.push('');
     lines.push('<b>Scheduled now</b>');
     for (const entry of scheduled) {
+      if (!entry.username) {
+        lines.push('🕳 Vacant');
+        continue;
+      }
       const isOn = openByUserId.has(entry.userId);
       lines.push(`${isOn ? '✅' : '⚠️'} @${escapeHtml(entry.username)}${isOn ? '' : ' — not clocked in'}`);
     }
@@ -248,7 +252,7 @@ async function replyWithSchedule(ctx, date, titlePrefix) {
   }
   const lines = entries.map((e) => {
     const nextDay = e.endHour > 24 ? ' (+1d)' : '';
-    return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · @${escapeHtml(e.username)}`;
+    return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · ${e.username ? '@' + escapeHtml(e.username) : 'Vacant'}`;
   });
   await ctx.reply(`<b>${titlePrefix} — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
 }
@@ -454,6 +458,7 @@ async function checkScheduleReminders() {
   const occurrences = schedule.getBlockOccurrencesAround(now);
 
   for (const occ of occurrences) {
+    if (!occ.userId) continue; // vacant slot — nobody to remind
     const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
     if (startDeltaMin <= SHIFT_START_REMINDER_MINUTES && startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6) {
       const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start');
