@@ -17,7 +17,9 @@ owner.
 - `/whosonshift` — see everyone currently clocked in, plus who's scheduled to
   be on shift right now per the roster (✅ scheduled + clocked in, ⚠️
   scheduled but not clocked in)
-- `/schedule` — see the full roster for today (CET, all blocks)
+- `/schedule` — see the full roster for today (CET, all blocks). DM only,
+  since it @mentions everyone listed
+- `/tomorrow` — same, for tomorrow's roster. Also DM only
 - `/whensmynextshift` — see how long until your next scheduled block (or
   that you're on right now)
 - `/myhistory` — see your last 10 completed shifts

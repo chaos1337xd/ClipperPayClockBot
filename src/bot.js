@@ -235,12 +235,14 @@ bot.command('whosonshift', async (ctx) => {
   await ctx.reply(lines.join('\n'), HTML);
 });
 
-bot.command('schedule', async (ctx) => {
+// Shared by /schedule and /tomorrow. DM-only because the roster is
+// rendered as @mentions, which would ping everyone listed if run in a group.
+async function replyWithSchedule(ctx, date, titlePrefix) {
   if (ctx.chat.type !== 'private') {
     const link = botUsername ? ` (@${botUsername})` : '';
     return ctx.reply(`Run this one in DM, not here — it @mentions the whole roster. Message me${link} privately.`);
   }
-  const { dayName, weekParity, entries } = schedule.getScheduleForCetDate();
+  const { dayName, weekParity, entries } = schedule.getScheduleForCetDate(date);
   if (entries.length === 0) {
     return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}). Times are CET.`, HTML);
   }
@@ -248,8 +250,16 @@ bot.command('schedule', async (ctx) => {
     const nextDay = e.endHour > 24 ? ' (+1d)' : '';
     return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · @${escapeHtml(e.username)}`;
   });
-  await ctx.reply(`<b>Schedule — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
-});
+  await ctx.reply(`<b>${titlePrefix} — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
+}
+
+bot.command('schedule', (ctx) => replyWithSchedule(ctx, new Date(), 'Schedule'));
+
+// Fixed CET has no DST, so now + 24h is always the same wall-clock time
+// tomorrow in CET.
+bot.command('tomorrow', (ctx) =>
+  replyWithSchedule(ctx, new Date(Date.now() + 24 * 60 * 60 * 1000), "Tomorrow's schedule")
+);
 
 bot.command('whensmynextshift', async (ctx) => {
   const result = schedule.getNextShiftForUser(ctx.from.id);
@@ -345,6 +355,7 @@ bot.command('help', async (ctx) => {
       '<code>/status [@user]</code> — see your (or their) current shift length',
       '<code>/whosonshift</code> — see who is currently clocked in',
       '<code>/schedule</code> — see today\'s roster',
+      '<code>/tomorrow</code> — see tomorrow\'s roster',
       '<code>/whensmynextshift</code> — see how long until your next scheduled shift',
       '<code>/myhistory</code> — see your last 10 completed shifts',
       ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
@@ -582,6 +593,7 @@ async function main() {
     { command: 'status', description: 'See shift length (yours or @user)' },
     { command: 'whosonshift', description: 'See who is currently clocked in' },
     { command: 'schedule', description: "See today's roster" },
+    { command: 'tomorrow', description: "See tomorrow's roster" },
     { command: 'whensmynextshift', description: 'See how long until your next shift' },
     { command: 'myhistory', description: 'See your last 10 shifts' },
     { command: 'checkins', description: 'Admin: see status-check timestamps for a shift' },
