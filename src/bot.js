@@ -90,6 +90,18 @@ async function findAnyShiftForTarget(target) {
   return null;
 }
 
+// Everyone on the main rota (vacant slots have no id). While an event is
+// live, only these people may use the regular /clockin.
+const rosterUserIds = new Set(
+  Object.values(schedule.ROSTER)
+    .map((p) => p.userId)
+    .filter(Boolean)
+);
+
+function isAdmin(ctx) {
+  return Boolean(ADMIN_ID) && ctx.from.id === ADMIN_ID;
+}
+
 async function notifyAdmin(text) {
   if (!ADMIN_ID) return;
   try {
@@ -108,6 +120,11 @@ bot.command('clockin', async (ctx) => {
   const existing = await db.getOpenShift(userId);
   if (existing) {
     return ctx.reply(`You're already clocked in (since <b>${fmtLocal(existing.clock_in)}</b>).`, HTML);
+  }
+  // While an event is live the regular clock-in is roster-only; anyone else
+  // is an extra and has their own flow (and their hours go in their own table).
+  if (!rosterUserIds.has(userId) && (await db.getActiveEvent())) {
+    return ctx.reply("An event is live and /clockin is for the main roster only — if you're an extra, use /extraclockin.");
   }
   let shift;
   try {
@@ -158,12 +175,18 @@ bot.command('checknow', async (ctx) => {
   if (!target) {
     return ctx.reply('Usage: reply to the clipper\'s message with /checknow, or /checknow @username');
   }
-  const shift = await findOpenShiftForTarget(target);
+  // A person is on a main shift or an extra one, never both (clock-in blocks it).
+  let shift = await findOpenShiftForTarget(target);
+  let kind = 'main';
+  if (!shift) {
+    shift = await findOpenExtraShiftForTarget(target);
+    kind = 'extra';
+  }
   if (!shift) {
     return ctx.reply("Couldn't find an active shift for that clipper.");
   }
   try {
-    await scheduler.sendCheckin(bot, shift);
+    await scheduler.sendCheckin(bot, shift, kind);
   } catch (e) {
     console.error('Manual check-in trigger failed', e);
     await ctx.reply('Failed to send the status check — check the logs.');
@@ -352,18 +375,9 @@ bot.command('monthlyreport', async (ctx) => {
 
 // ---- Events / extras ----------------------------------------------------
 // People who aren't on the main roster clock in against a live event. Kept
-// entirely separate from the main shift flow (own tables, own commands, no
-// check-ins), so they never show in /whosonshift or the daily/weekly reports.
-
-const rosterUserIds = new Set(
-  Object.values(schedule.ROSTER)
-    .map((p) => p.userId)
-    .filter(Boolean)
-);
-
-function isAdmin(ctx) {
-  return Boolean(ADMIN_ID) && ctx.from.id === ADMIN_ID;
-}
+// separate from the main shift flow (own tables, own commands), so they
+// never show in /whosonshift or the daily/weekly reports — but they get
+// the same status-check pings, via the shared scheduler (kind 'extra').
 
 // Plain bold name (no @) so event lists never ping anyone, even when the
 // admin runs them in a group.
@@ -373,6 +387,13 @@ function plainName(row) {
 
 function secondsSince(date) {
   return (Date.now() - new Date(date).getTime()) / 1000;
+}
+
+// Stops an extra's status checks and marks any check-in still waiting on an
+// answer as missed — same as what /clockout does for a main shift.
+async function wrapUpExtraChecks(shiftId) {
+  scheduler.stopShiftChecks(shiftId, 'extra');
+  await db.expirePendingExtraCheckinsForShift(shiftId);
 }
 
 async function findOpenExtraShiftForTarget(target) {
@@ -389,7 +410,8 @@ async function buildEventReportText(event) {
 
   const total = rows.reduce((sum, r) => sum + Number(r.seconds_worked), 0);
   const lines = rows.map(
-    (r) => `• ${plainName(r)}: <b>${formatDuration(Number(r.seconds_worked))}</b> (${r.shifts_count} shift${Number(r.shifts_count) === 1 ? '' : 's'})`
+    (r) =>
+      `• ${plainName(r)}: <b>${formatDuration(Number(r.seconds_worked))}</b> (${r.shifts_count} shift${Number(r.shifts_count) === 1 ? '' : 's'}) · ${r.confirmed_checkins} confirmed / ${r.missed_checkins} missed`
   );
   return `${header}\n${lines.join('\n')}\n\nTotal: <b>${formatDuration(total)}</b> across ${rows.length} extra${rows.length === 1 ? '' : 's'}`;
 }
@@ -431,6 +453,7 @@ bot.command('eventend', async (ctx) => {
   const closed = await db.closeAllOpenExtraShifts(ended.id);
 
   for (const s of closed) {
+    await wrapUpExtraChecks(s.id);
     const seconds = (new Date(s.clock_out) - new Date(s.clock_in)) / 1000;
     try {
       await bot.telegram.sendMessage(
@@ -477,6 +500,7 @@ bot.command('extraforceclockout', async (ctx) => {
   const shift = await findOpenExtraShiftForTarget(target);
   if (!shift) return ctx.reply("Couldn't find an extra clocked in for that person.");
 
+  await wrapUpExtraChecks(shift.id);
   const closed = await db.closeExtraShift(shift.id);
   if (!closed) return ctx.reply('They were already clocked out.');
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
@@ -503,7 +527,7 @@ bot.command('extraclockin', async (ctx) => {
 
   let shift;
   try {
-    shift = await db.createExtraShift(userId, ctx.from.username || null, displayNameOf(ctx.from));
+    shift = await db.createExtraShift(userId, ctx.from.username || null, displayNameOf(ctx.from), ctx.chat.id);
   } catch (e) {
     if (e.code === '23505') {
       // Double-tap / retried update: the unique index caught it.
@@ -516,8 +540,13 @@ bot.command('extraclockin', async (ctx) => {
   }
   if (!shift) return ctx.reply('No event is running right now.');
 
+  await scheduler.startShiftChecks(bot, shift, 'extra');
+
   const event = await db.getEventById(shift.event_id);
-  await ctx.reply(`✅ ${fromTag(ctx.from)} clocked in for <b>${escapeHtml(event?.name ?? 'the event')}</b>.`, HTML);
+  await ctx.reply(
+    `✅ ${fromTag(ctx.from)} clocked in for <b>${escapeHtml(event?.name ?? 'the event')}</b>. Status checks every <b>${scheduler.CHECKIN_INTERVAL_MS / 60000}</b> min — tap the button when prompted.`,
+    HTML
+  );
   if (userId !== ADMIN_ID) {
     await notifyAdmin(`🎪 ${fromTag(ctx.from)} clocked in as an extra (<b>${escapeHtml(event?.name ?? 'event')}</b>).`);
   }
@@ -528,6 +557,7 @@ bot.command('extraclockout', async (ctx) => {
   const shift = await db.getOpenExtraShift(userId);
   if (!shift) return ctx.reply("You're not clocked in as an extra.");
 
+  await wrapUpExtraChecks(shift.id);
   const closed = await db.closeExtraShift(shift.id);
   if (!closed) return ctx.reply("You're not clocked in as an extra.");
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
@@ -568,23 +598,39 @@ bot.command('help', async (ctx) => {
   );
 });
 
+// Button callbacks are `<prefix>:<checkinId>`; the prefix says which table
+// the check-in lives in (main roster vs event extras).
+const CHECKIN_CALLBACKS = {
+  checkin: {
+    getCheckin: db.getCheckin,
+    getShift: (checkin) => db.getShiftById(checkin.shift_id),
+    confirm: db.confirmCheckin,
+  },
+  xcheckin: {
+    getCheckin: db.getExtraCheckin,
+    getShift: (checkin) => db.getExtraShiftById(checkin.extra_shift_id),
+    confirm: db.confirmExtraCheckin,
+  },
+};
+
 bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data || '';
-  if (!data.startsWith('checkin:')) return ctx.answerCbQuery();
+  const [prefix, idPart] = data.split(':');
+  const handler = CHECKIN_CALLBACKS[prefix];
+  if (!handler) return ctx.answerCbQuery();
 
-  const idPart = data.split(':')[1];
   if (idPart === 'pending') {
     return ctx.answerCbQuery('Give it a second and try again.');
   }
 
   const checkinId = Number(idPart);
-  const checkin = await db.getCheckin(checkinId);
+  const checkin = await handler.getCheckin(checkinId);
   if (!checkin) return ctx.answerCbQuery('Check-in not found.');
 
-  const shiftRes = await db.pool.query('SELECT * FROM shifts WHERE id = $1', [checkin.shift_id]);
-  const shift = shiftRes.rows[0];
+  const shift = await handler.getShift(checkin);
+  if (!shift) return ctx.answerCbQuery('Check-in not found.');
 
-  if (shift && ctx.from.id !== shift.user_id) {
+  if (ctx.from.id !== shift.user_id) {
     return ctx.answerCbQuery('This check-in is not for you.');
   }
 
@@ -592,7 +638,7 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery(`Already ${checkin.status}.`);
   }
 
-  const confirmed = await db.confirmCheckin(checkinId);
+  const confirmed = await handler.confirm(checkinId);
   if (!confirmed) {
     return ctx.answerCbQuery('Too late — this check-in already expired.');
   }
@@ -702,7 +748,20 @@ async function resumeActiveShifts() {
     await db.expireCheckin(c.id);
   }
 
-  return open.length;
+  // Same for event extras still clocked in across a restart.
+  const openExtras = await db.getAllOpenExtraShifts();
+  for (const shift of openExtras) {
+    await scheduler.startShiftChecks(bot, shift, 'extra');
+  }
+  if (openExtras.length) {
+    console.log(`Resumed check-in scheduling for ${openExtras.length} active extra shift(s).`);
+  }
+  const pendingExtras = await db.getPendingExtraCheckins();
+  for (const c of pendingExtras) {
+    await db.expireExtraCheckin(c.id);
+  }
+
+  return open.length + openExtras.length;
 }
 
 // On redeploy, Telegram can take a few seconds after the old container
@@ -815,16 +874,21 @@ async function main() {
   await notifyAdmin(`🟢 Bot online — resumed <b>${resumedCount}</b> active shift(s).`);
 }
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
 async function crashAndExit(reason, err) {
   console.error(reason, err);
   await notifyAdmin(`🔴 Bot crashed (${escapeHtml(reason)})\n<code>${escapeHtml(String(err?.message || err))}</code>`);
   process.exit(1);
 }
 
-process.on('uncaughtException', (err) => crashAndExit('uncaughtException', err));
-process.on('unhandledRejection', (err) => crashAndExit('unhandledRejection', err));
+// Only boot when run directly (`npm start`); when required by a test the
+// bot object is just exported so handlers can be driven without Telegram.
+if (require.main === module) {
+  process.once('SIGINT', () => bot.stop('SIGINT'));
+  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  process.on('uncaughtException', (err) => crashAndExit('uncaughtException', err));
+  process.on('unhandledRejection', (err) => crashAndExit('unhandledRejection', err));
 
-main().catch((e) => crashAndExit('Fatal startup error', e));
+  main().catch((e) => crashAndExit('Fatal startup error', e));
+}
+
+module.exports = { bot };

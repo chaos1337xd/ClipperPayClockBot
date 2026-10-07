@@ -41,19 +41,27 @@ owner.
 ## Events / extras
 
 For one-off events with people who aren't on the main rota. Extras live in
-their own tables (`events`, `extra_shifts`), so they never show up in
-`/whosonshift` or the daily/weekly/monthly reports, and there are no
-status-check pings for them.
+their own tables (`events`, `extra_shifts`, `extra_checkins`), so they never
+show up in `/whosonshift` or the daily/weekly/monthly reports.
 
 1. Admin runs `/eventstart <name>`. Only one event can be live at a time.
-2. Extras DM the bot `/extraclockin` (anyone not on the roster; roster
-   members are told to use `/clockin`, and someone mid main-shift is told to
-   clock out first). `/extraclockout` when done. The admin gets a DM on each
-   clock-in/out.
-3. `/extras` shows who's clocked in right now; `/eventreport` shows hours per
-   extra for the live (or most recent) event. Names are bolded rather than
-   @mentioned, so running these in a group doesn't ping anyone.
-4. `/eventend` closes the event, clocks out anyone who forgot (and DMs them),
+2. **While an event is live, the regular `/clockin` is roster-only.** Anyone
+   else who tries it is pointed at `/extraclockin`. Roster members who try
+   `/extraclockin` are sent back to `/clockin`, and someone already on a main
+   shift is told to clock out first. (Normal `/clockin` opens back up for
+   everyone when the event ends.)
+3. Extras DM the bot `/extraclockin`, and `/extraclockout` when done. The
+   admin gets a DM on each clock-in/out.
+4. Extras get the **same status-check pings** as the main team (same
+   interval and grace period, sent to their DM), and the admin gets the same
+   immediate `⚠️ ... missed a status check (extra)` DM on a miss.
+   `/checknow @user` works on extras too. Extra check-ins resume after a bot
+   restart just like main ones.
+5. `/extras` shows who's clocked in right now; `/eventreport` shows hours,
+   shifts and confirmed/missed check-ins per extra for the live (or most
+   recent) event. Names are bolded rather than @mentioned, so running these
+   in a group doesn't ping anyone.
+6. `/eventend` closes the event, clocks out anyone who forgot (and DMs them),
    and posts the final totals. `/extraforceclockout` handles a single person.
 
 ## How status checks work

@@ -73,8 +73,21 @@ async function init() {
       user_id BIGINT NOT NULL,
       username TEXT,
       display_name TEXT,
+      chat_id BIGINT NOT NULL, -- where this extra's status checks get sent (their DM)
       clock_in TIMESTAMPTZ NOT NULL DEFAULT now(),
       clock_out TIMESTAMPTZ
+    );
+
+    -- Status checks for extras: same shape as checkins, but pointing at
+    -- extra_shifts so nothing here can reach the main reports.
+    CREATE TABLE IF NOT EXISTS extra_checkins (
+      id SERIAL PRIMARY KEY,
+      extra_shift_id INTEGER NOT NULL REFERENCES extra_shifts(id) ON DELETE CASCADE,
+      chat_id BIGINT NOT NULL,
+      message_id BIGINT,
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      responded_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending' -- pending | confirmed | missed
     );
 
     -- At most one live event, and at most one open extra shift per person,
@@ -82,6 +95,7 @@ async function init() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_events_one_active ON events ((true)) WHERE ended_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_extra_shifts_one_open_per_user ON extra_shifts (user_id) WHERE clock_out IS NULL;
     CREATE INDEX IF NOT EXISTS idx_extra_shifts_event ON extra_shifts (event_id);
+    CREATE INDEX IF NOT EXISTS idx_extra_checkins_pending ON extra_checkins (status) WHERE status = 'pending';
   `);
 }
 
@@ -146,14 +160,90 @@ async function getOpenExtraShiftsForEvent(eventId) {
 // Inserts only if an event is live *at the moment of the insert* — so a
 // clock-in racing /eventend can't create a shift on an already-ended event
 // that nobody would ever close. Returns null when there's no live event.
-async function createExtraShift(userId, username, displayName) {
+async function createExtraShift(userId, username, displayName, chatId) {
   const { rows } = await pool.query(
-    `INSERT INTO extra_shifts (event_id, user_id, username, display_name)
-     SELECT e.id, $1, $2, $3 FROM events e WHERE e.ended_at IS NULL
+    `INSERT INTO extra_shifts (event_id, user_id, username, display_name, chat_id)
+     SELECT e.id, $1, $2, $3, $4 FROM events e WHERE e.ended_at IS NULL
      RETURNING *`,
-    [userId, username, displayName]
+    [userId, username, displayName, chatId]
   );
   return rows[0] || null;
+}
+
+async function getExtraShiftById(id) {
+  const { rows } = await pool.query(`SELECT * FROM extra_shifts WHERE id = $1`, [id]);
+  return rows[0] || null;
+}
+
+async function getAllOpenExtraShifts() {
+  const { rows } = await pool.query(`SELECT * FROM extra_shifts WHERE clock_out IS NULL`);
+  return rows;
+}
+
+async function updateOpenExtraShiftsChatId(oldChatId, newChatId) {
+  await pool.query(`UPDATE extra_shifts SET chat_id = $1 WHERE chat_id = $2 AND clock_out IS NULL`, [
+    newChatId,
+    oldChatId,
+  ]);
+}
+
+// ---- Extra status checks (mirror of the main checkin functions) ----
+
+async function createExtraCheckin(extraShiftId, chatId, messageId = null) {
+  const { rows } = await pool.query(
+    `INSERT INTO extra_checkins (extra_shift_id, chat_id, message_id) VALUES ($1, $2, $3) RETURNING *`,
+    [extraShiftId, chatId, messageId]
+  );
+  return rows[0];
+}
+
+async function setExtraCheckinMessageId(checkinId, messageId) {
+  await pool.query(`UPDATE extra_checkins SET message_id = $1 WHERE id = $2`, [messageId, checkinId]);
+}
+
+async function updateExtraCheckinChatId(checkinId, chatId) {
+  await pool.query(`UPDATE extra_checkins SET chat_id = $1 WHERE id = $2`, [chatId, checkinId]);
+}
+
+async function getExtraCheckin(checkinId) {
+  const { rows } = await pool.query(`SELECT * FROM extra_checkins WHERE id = $1`, [checkinId]);
+  return rows[0] || null;
+}
+
+async function confirmExtraCheckin(checkinId) {
+  const { rows } = await pool.query(
+    `UPDATE extra_checkins SET status = 'confirmed', responded_at = now() WHERE id = $1 AND status = 'pending' RETURNING *`,
+    [checkinId]
+  );
+  return rows[0] || null;
+}
+
+async function expireExtraCheckin(checkinId) {
+  const { rows } = await pool.query(
+    `UPDATE extra_checkins SET status = 'missed' WHERE id = $1 AND status = 'pending' RETURNING *`,
+    [checkinId]
+  );
+  return rows[0] || null;
+}
+
+async function expirePendingExtraCheckinsForShift(extraShiftId) {
+  await pool.query(
+    `UPDATE extra_checkins SET status = 'missed' WHERE extra_shift_id = $1 AND status = 'pending'`,
+    [extraShiftId]
+  );
+}
+
+async function getPendingExtraCheckins() {
+  const { rows } = await pool.query(`SELECT * FROM extra_checkins WHERE status = 'pending'`);
+  return rows;
+}
+
+async function getLastExtraCheckinSentAt(extraShiftId) {
+  const { rows } = await pool.query(
+    `SELECT sent_at FROM extra_checkins WHERE extra_shift_id = $1 ORDER BY sent_at DESC LIMIT 1`,
+    [extraShiftId]
+  );
+  return rows[0]?.sent_at || null;
 }
 
 async function closeExtraShift(shiftId) {
@@ -172,19 +262,39 @@ async function closeAllOpenExtraShifts(eventId) {
   return rows;
 }
 
-// One table, so no join fan-out to worry about (unlike the main report).
+// Shifts and check-ins are aggregated separately before joining — joining
+// them directly would multiply each shift's duration by its check-in count
+// (the same fan-out bug the main report had).
 async function getEventReportData(eventId) {
   const { rows } = await pool.query(
-    `SELECT
-       user_id,
-       (array_agg(display_name ORDER BY clock_in DESC))[1] AS display_name,
-       (array_agg(username ORDER BY clock_in DESC))[1] AS username,
-       SUM(EXTRACT(EPOCH FROM (COALESCE(clock_out, now()) - clock_in))) AS seconds_worked,
-       COUNT(*) AS shifts_count
-     FROM extra_shifts
-     WHERE event_id = $1
-     GROUP BY user_id
-     ORDER BY seconds_worked DESC`,
+    `WITH shift_agg AS (
+       SELECT
+         user_id,
+         (array_agg(display_name ORDER BY clock_in DESC))[1] AS display_name,
+         (array_agg(username ORDER BY clock_in DESC))[1] AS username,
+         SUM(EXTRACT(EPOCH FROM (COALESCE(clock_out, now()) - clock_in))) AS seconds_worked,
+         COUNT(*) AS shifts_count
+       FROM extra_shifts
+       WHERE event_id = $1
+       GROUP BY user_id
+     ),
+     checkin_agg AS (
+       SELECT
+         s.user_id,
+         SUM(CASE WHEN c.status = 'missed' THEN 1 ELSE 0 END) AS missed_checkins,
+         SUM(CASE WHEN c.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_checkins
+       FROM extra_shifts s
+       JOIN extra_checkins c ON c.extra_shift_id = s.id
+       WHERE s.event_id = $1
+       GROUP BY s.user_id
+     )
+     SELECT
+       sa.user_id, sa.display_name, sa.username, sa.seconds_worked, sa.shifts_count,
+       COALESCE(ca.missed_checkins, 0) AS missed_checkins,
+       COALESCE(ca.confirmed_checkins, 0) AS confirmed_checkins
+     FROM shift_agg sa
+     LEFT JOIN checkin_agg ca ON ca.user_id = sa.user_id
+     ORDER BY sa.seconds_worked DESC`,
     [eventId]
   );
   return rows;
@@ -195,6 +305,11 @@ async function getOpenShift(userId) {
     `SELECT * FROM shifts WHERE user_id = $1 AND clock_out IS NULL LIMIT 1`,
     [userId]
   );
+  return rows[0] || null;
+}
+
+async function getShiftById(id) {
+  const { rows } = await pool.query(`SELECT * FROM shifts WHERE id = $1`, [id]);
   return rows[0] || null;
 }
 
@@ -396,6 +511,19 @@ module.exports = {
   getOpenExtraShiftByUsername,
   getOpenExtraShiftsForEvent,
   createExtraShift,
+  getExtraShiftById,
+  getAllOpenExtraShifts,
+  updateOpenExtraShiftsChatId,
+  createExtraCheckin,
+  setExtraCheckinMessageId,
+  updateExtraCheckinChatId,
+  getExtraCheckin,
+  confirmExtraCheckin,
+  expireExtraCheckin,
+  expirePendingExtraCheckinsForShift,
+  getPendingExtraCheckins,
+  getLastExtraCheckinSentAt,
+  getShiftById,
   closeExtraShift,
   closeAllOpenExtraShifts,
   getEventReportData,
