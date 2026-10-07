@@ -55,7 +55,139 @@ async function init() {
     -- same person. Replaces the old non-unique idx_shifts_open.
     DROP INDEX IF EXISTS idx_shifts_open;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open_per_user ON shifts (user_id) WHERE clock_out IS NULL;
+
+    -- One-off events (e.g. a stream day) with "extras" who aren't on the
+    -- main roster. Deliberately separate tables so extras never leak into
+    -- the main shift reports, /whosonshift or check-in scheduling.
+    CREATE TABLE IF NOT EXISTS events (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ended_at TIMESTAMPTZ,
+      created_by BIGINT
+    );
+
+    CREATE TABLE IF NOT EXISTS extra_shifts (
+      id SERIAL PRIMARY KEY,
+      event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL,
+      username TEXT,
+      display_name TEXT,
+      clock_in TIMESTAMPTZ NOT NULL DEFAULT now(),
+      clock_out TIMESTAMPTZ
+    );
+
+    -- At most one live event, and at most one open extra shift per person,
+    -- enforced by the DB so a double-tap or two admins can't create dupes.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_events_one_active ON events ((true)) WHERE ended_at IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_extra_shifts_one_open_per_user ON extra_shifts (user_id) WHERE clock_out IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_extra_shifts_event ON extra_shifts (event_id);
   `);
+}
+
+// ---- Events / extras ----
+
+async function getActiveEvent() {
+  const { rows } = await pool.query(`SELECT * FROM events WHERE ended_at IS NULL LIMIT 1`);
+  return rows[0] || null;
+}
+
+async function getLatestEvent() {
+  const { rows } = await pool.query(`SELECT * FROM events ORDER BY started_at DESC LIMIT 1`);
+  return rows[0] || null;
+}
+
+async function getEventById(eventId) {
+  const { rows } = await pool.query(`SELECT * FROM events WHERE id = $1`, [eventId]);
+  return rows[0] || null;
+}
+
+// Throws a 23505 unique violation if an event is already live.
+async function createEvent(name, createdBy) {
+  const { rows } = await pool.query(
+    `INSERT INTO events (name, created_by) VALUES ($1, $2) RETURNING *`,
+    [name, createdBy]
+  );
+  return rows[0];
+}
+
+async function endEvent(eventId) {
+  const { rows } = await pool.query(
+    `UPDATE events SET ended_at = now() WHERE id = $1 AND ended_at IS NULL RETURNING *`,
+    [eventId]
+  );
+  return rows[0] || null;
+}
+
+async function getOpenExtraShift(userId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM extra_shifts WHERE user_id = $1 AND clock_out IS NULL LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+async function getOpenExtraShiftByUsername(username) {
+  const { rows } = await pool.query(
+    `SELECT * FROM extra_shifts WHERE clock_out IS NULL AND lower(username) = lower($1) LIMIT 1`,
+    [username]
+  );
+  return rows[0] || null;
+}
+
+async function getOpenExtraShiftsForEvent(eventId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM extra_shifts WHERE event_id = $1 AND clock_out IS NULL ORDER BY clock_in ASC`,
+    [eventId]
+  );
+  return rows;
+}
+
+// Inserts only if an event is live *at the moment of the insert* — so a
+// clock-in racing /eventend can't create a shift on an already-ended event
+// that nobody would ever close. Returns null when there's no live event.
+async function createExtraShift(userId, username, displayName) {
+  const { rows } = await pool.query(
+    `INSERT INTO extra_shifts (event_id, user_id, username, display_name)
+     SELECT e.id, $1, $2, $3 FROM events e WHERE e.ended_at IS NULL
+     RETURNING *`,
+    [userId, username, displayName]
+  );
+  return rows[0] || null;
+}
+
+async function closeExtraShift(shiftId) {
+  const { rows } = await pool.query(
+    `UPDATE extra_shifts SET clock_out = now() WHERE id = $1 AND clock_out IS NULL RETURNING *`,
+    [shiftId]
+  );
+  return rows[0] || null;
+}
+
+async function closeAllOpenExtraShifts(eventId) {
+  const { rows } = await pool.query(
+    `UPDATE extra_shifts SET clock_out = now() WHERE event_id = $1 AND clock_out IS NULL RETURNING *`,
+    [eventId]
+  );
+  return rows;
+}
+
+// One table, so no join fan-out to worry about (unlike the main report).
+async function getEventReportData(eventId) {
+  const { rows } = await pool.query(
+    `SELECT
+       user_id,
+       (array_agg(display_name ORDER BY clock_in DESC))[1] AS display_name,
+       (array_agg(username ORDER BY clock_in DESC))[1] AS username,
+       SUM(EXTRACT(EPOCH FROM (COALESCE(clock_out, now()) - clock_in))) AS seconds_worked,
+       COUNT(*) AS shifts_count
+     FROM extra_shifts
+     WHERE event_id = $1
+     GROUP BY user_id
+     ORDER BY seconds_worked DESC`,
+    [eventId]
+  );
+  return rows;
 }
 
 async function getOpenShift(userId) {
@@ -255,6 +387,18 @@ async function getDailyReportData(sinceIso) {
 module.exports = {
   pool,
   init,
+  getActiveEvent,
+  getLatestEvent,
+  getEventById,
+  createEvent,
+  endEvent,
+  getOpenExtraShift,
+  getOpenExtraShiftByUsername,
+  getOpenExtraShiftsForEvent,
+  createExtraShift,
+  closeExtraShift,
+  closeAllOpenExtraShifts,
+  getEventReportData,
   getOpenShift,
   getAllOpenShifts,
   getOpenShiftByUsername,

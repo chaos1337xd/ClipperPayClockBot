@@ -350,6 +350,193 @@ bot.command('monthlyreport', async (ctx) => {
   await ctx.reply(report, HTML);
 });
 
+// ---- Events / extras ----------------------------------------------------
+// People who aren't on the main roster clock in against a live event. Kept
+// entirely separate from the main shift flow (own tables, own commands, no
+// check-ins), so they never show in /whosonshift or the daily/weekly reports.
+
+const rosterUserIds = new Set(
+  Object.values(schedule.ROSTER)
+    .map((p) => p.userId)
+    .filter(Boolean)
+);
+
+function isAdmin(ctx) {
+  return Boolean(ADMIN_ID) && ctx.from.id === ADMIN_ID;
+}
+
+// Plain bold name (no @) so event lists never ping anyone, even when the
+// admin runs them in a group.
+function plainName(row) {
+  return `<b>${escapeHtml(row.display_name || row.username || row.user_id)}</b>`;
+}
+
+function secondsSince(date) {
+  return (Date.now() - new Date(date).getTime()) / 1000;
+}
+
+async function findOpenExtraShiftForTarget(target) {
+  if (target.userId) return db.getOpenExtraShift(target.userId);
+  if (target.username) return db.getOpenExtraShiftByUsername(target.username);
+  return null;
+}
+
+async function buildEventReportText(event) {
+  const rows = await db.getEventReportData(event.id);
+  const status = event.ended_at ? `ended ${fmtLocal(event.ended_at)}` : 'live';
+  const header = `<b>🎪 ${escapeHtml(event.name)}</b> — ${status}\nStarted ${fmtLocal(event.started_at)}`;
+  if (rows.length === 0) return `${header}\nNo extras have clocked in.`;
+
+  const total = rows.reduce((sum, r) => sum + Number(r.seconds_worked), 0);
+  const lines = rows.map(
+    (r) => `• ${plainName(r)}: <b>${formatDuration(Number(r.seconds_worked))}</b> (${r.shifts_count} shift${Number(r.shifts_count) === 1 ? '' : 's'})`
+  );
+  return `${header}\n${lines.join('\n')}\n\nTotal: <b>${formatDuration(total)}</b> across ${rows.length} extra${rows.length === 1 ? '' : 's'}`;
+}
+
+bot.command('eventstart', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('This command is admin-only.');
+  const name = getArgs(ctx).join(' ').trim();
+  if (!name) return ctx.reply('Usage: /eventstart <event name>');
+
+  let event;
+  try {
+    event = await db.createEvent(name, ctx.from.id);
+  } catch (e) {
+    if (e.code === '23505') {
+      const live = await db.getActiveEvent();
+      return ctx.reply(
+        `An event is already running: <b>${escapeHtml(live?.name ?? '?')}</b>. Run /eventend first.`,
+        HTML
+      );
+    }
+    throw e;
+  }
+  const link = botUsername ? ` @${botUsername}` : ' me';
+  await ctx.reply(
+    `🎪 Event <b>${escapeHtml(event.name)}</b> started. Extras can DM${link} <code>/extraclockin</code>.`,
+    HTML
+  );
+});
+
+bot.command('eventend', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('This command is admin-only.');
+  const live = await db.getActiveEvent();
+  if (!live) return ctx.reply('No event is running.');
+
+  // End the event first: createExtraShift only inserts while an event is
+  // live, so nobody can slip in a shift after this point.
+  const ended = await db.endEvent(live.id);
+  if (!ended) return ctx.reply('That event was already ended.');
+  const closed = await db.closeAllOpenExtraShifts(ended.id);
+
+  for (const s of closed) {
+    const seconds = (new Date(s.clock_out) - new Date(s.clock_in)) / 1000;
+    try {
+      await bot.telegram.sendMessage(
+        s.user_id,
+        `🛑 <b>${escapeHtml(ended.name)}</b> has ended — you've been clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`,
+        HTML
+      );
+    } catch (e) {
+      console.error(`Failed to DM extra ${s.user_id} about event end`, e);
+    }
+  }
+
+  const stillIn = closed.length ? `Clocked out ${closed.length} still on shift.\n\n` : '';
+  await ctx.reply(`🏁 Event ended. ${stillIn}${await buildEventReportText(ended)}`, HTML);
+});
+
+bot.command('extras', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('This command is admin-only.');
+  const event = (await db.getActiveEvent()) || (await db.getLatestEvent());
+  if (!event) return ctx.reply('No events yet. Start one with /eventstart <name>.');
+
+  const open = await db.getOpenExtraShiftsForEvent(event.id);
+  const head = `<b>🎪 ${escapeHtml(event.name)}</b> — ${event.ended_at ? 'ended' : 'live'}`;
+  if (open.length === 0) {
+    return ctx.reply(`${head}\nNobody's clocked in right now. /eventreport for totals.`, HTML);
+  }
+  const lines = open.map((s) => `🟢 ${plainName(s)} — <b>${formatDuration(secondsSince(s.clock_in))}</b>`);
+  await ctx.reply(`${head}\n${lines.join('\n')}\n\n${open.length} clocked in. /eventreport for totals.`, HTML);
+});
+
+bot.command('eventreport', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('This command is admin-only.');
+  const event = (await db.getActiveEvent()) || (await db.getLatestEvent());
+  if (!event) return ctx.reply('No events yet. Start one with /eventstart <name>.');
+  await ctx.reply(await buildEventReportText(event), HTML);
+});
+
+bot.command('extraforceclockout', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('This command is admin-only.');
+  const target = resolveTargetFromArgsOrReply(ctx);
+  if (!target) {
+    return ctx.reply("Usage: reply to the extra's message with /extraforceclockout, or /extraforceclockout @username");
+  }
+  const shift = await findOpenExtraShiftForTarget(target);
+  if (!shift) return ctx.reply("Couldn't find an extra clocked in for that person.");
+
+  const closed = await db.closeExtraShift(shift.id);
+  if (!closed) return ctx.reply('They were already clocked out.');
+  const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
+  await ctx.reply(`🛑 ${plainName(shift)} force-clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
+});
+
+bot.command('extraclockin', async (ctx) => {
+  if (ctx.chat.type !== 'private') {
+    const link = botUsername ? ` (@${botUsername})` : '';
+    return ctx.reply(`Clock in over DM, not here — message me${link} privately and run /extraclockin there.`);
+  }
+  const userId = ctx.from.id;
+
+  if (rosterUserIds.has(userId)) {
+    return ctx.reply("You're on the main roster — use /clockin for your normal shift.");
+  }
+  if (await db.getOpenShift(userId)) {
+    return ctx.reply("You're clocked in on a main shift — /clockout first.");
+  }
+  const already = await db.getOpenExtraShift(userId);
+  if (already) {
+    return ctx.reply(`You're already clocked in (since <b>${fmtLocal(already.clock_in)}</b>).`, HTML);
+  }
+
+  let shift;
+  try {
+    shift = await db.createExtraShift(userId, ctx.from.username || null, displayNameOf(ctx.from));
+  } catch (e) {
+    if (e.code === '23505') {
+      // Double-tap / retried update: the unique index caught it.
+      const raced = await db.getOpenExtraShift(userId);
+      if (raced) {
+        return ctx.reply(`You're already clocked in (since <b>${fmtLocal(raced.clock_in)}</b>).`, HTML);
+      }
+    }
+    throw e;
+  }
+  if (!shift) return ctx.reply('No event is running right now.');
+
+  const event = await db.getEventById(shift.event_id);
+  await ctx.reply(`✅ ${fromTag(ctx.from)} clocked in for <b>${escapeHtml(event?.name ?? 'the event')}</b>.`, HTML);
+  if (userId !== ADMIN_ID) {
+    await notifyAdmin(`🎪 ${fromTag(ctx.from)} clocked in as an extra (<b>${escapeHtml(event?.name ?? 'event')}</b>).`);
+  }
+});
+
+bot.command('extraclockout', async (ctx) => {
+  const userId = ctx.from.id;
+  const shift = await db.getOpenExtraShift(userId);
+  if (!shift) return ctx.reply("You're not clocked in as an extra.");
+
+  const closed = await db.closeExtraShift(shift.id);
+  if (!closed) return ctx.reply("You're not clocked in as an extra.");
+  const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
+  await ctx.reply(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
+  if (userId !== ADMIN_ID) {
+    await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out as an extra. Shift length: <b>${formatDuration(seconds)}</b>.`);
+  }
+});
+
 bot.command('help', async (ctx) => {
   await ctx.reply(
     [
@@ -368,6 +555,12 @@ bot.command('help', async (ctx) => {
       ADMIN_ID ? '<code>/monthlyreport</code> — (admin) get the trailing-30-days report' : null,
       ADMIN_ID ? '<code>/forceclockout @user</code> — (admin) clock someone out, reply to their message also works' : null,
       ADMIN_ID ? '<code>/checknow @user</code> — (admin) send an immediate status check, reply to their message also works' : null,
+      '<code>/extraclockin</code> / <code>/extraclockout</code> — clock in/out as an extra during an event (DM)',
+      ADMIN_ID ? '<code>/eventstart &lt;name&gt;</code> — (admin) open an event so extras can clock in' : null,
+      ADMIN_ID ? '<code>/eventend</code> — (admin) end the event, clock out anyone left, show totals' : null,
+      ADMIN_ID ? '<code>/extras</code> — (admin) who\'s clocked in right now' : null,
+      ADMIN_ID ? '<code>/eventreport</code> — (admin) per-extra hours for the live/latest event' : null,
+      ADMIN_ID ? '<code>/extraforceclockout @user</code> — (admin) clock an extra out' : null,
     ]
       .filter(Boolean)
       .join('\n'),
@@ -607,6 +800,13 @@ async function main() {
     { command: 'monthlyreport', description: 'Admin: get the trailing 30 days report' },
     { command: 'forceclockout', description: 'Admin: clock a clipper out' },
     { command: 'checknow', description: 'Admin: send an immediate status check' },
+    { command: 'extraclockin', description: 'Clock in as an extra for the live event (DM)' },
+    { command: 'extraclockout', description: 'Clock out as an extra' },
+    { command: 'eventstart', description: 'Admin: start an event for extras' },
+    { command: 'eventend', description: 'Admin: end the event + show totals' },
+    { command: 'extras', description: "Admin: who's clocked in at the event" },
+    { command: 'eventreport', description: 'Admin: per-extra hours for the event' },
+    { command: 'extraforceclockout', description: 'Admin: clock an extra out' },
     { command: 'help', description: 'List commands' },
   ]);
 

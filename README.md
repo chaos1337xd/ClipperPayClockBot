@@ -32,7 +32,29 @@ owner.
   by replying to their message instead of naming them
 - `/checknow @user` — (admin only) send an immediate status check outside the
   normal 30-min cadence; also works by replying to their message
+- `/extraclockin` / `/extraclockout` — clock in/out as an **extra** during a
+  live event (see below). `/extraclockin` is DM only
+- `/eventstart <name>`, `/eventend`, `/extras`, `/eventreport`,
+  `/extraforceclockout @user` — (admin only) run an event; see below
 - `/help` — list commands
+
+## Events / extras
+
+For one-off events with people who aren't on the main rota. Extras live in
+their own tables (`events`, `extra_shifts`), so they never show up in
+`/whosonshift` or the daily/weekly/monthly reports, and there are no
+status-check pings for them.
+
+1. Admin runs `/eventstart <name>`. Only one event can be live at a time.
+2. Extras DM the bot `/extraclockin` (anyone not on the roster; roster
+   members are told to use `/clockin`, and someone mid main-shift is told to
+   clock out first). `/extraclockout` when done. The admin gets a DM on each
+   clock-in/out.
+3. `/extras` shows who's clocked in right now; `/eventreport` shows hours per
+   extra for the live (or most recent) event. Names are bolded rather than
+   @mentioned, so running these in a group doesn't ping anyone.
+4. `/eventend` closes the event, clocks out anyone who forgot (and DMs them),
+   and posts the final totals. `/extraforceclockout` handles a single person.
 
 ## How status checks work
 
