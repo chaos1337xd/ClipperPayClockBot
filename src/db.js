@@ -39,7 +39,7 @@ async function init() {
     CREATE TABLE IF NOT EXISTS schedule_reminders (
       username TEXT NOT NULL,
       occurrence_at TIMESTAMPTZ NOT NULL,
-      type TEXT NOT NULL, -- 'start' | 'end'
+      type TEXT NOT NULL, -- 'start' | 'start1' (1-min last call) | 'end'
       sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (username, occurrence_at, type)
     );

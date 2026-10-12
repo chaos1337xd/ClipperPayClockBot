@@ -17,6 +17,14 @@ const MAX_SHIFT_HOURS = Number(process.env.MAX_SHIFT_HOURS || 12);
 const LONG_SHIFT_CHECK_CRON = process.env.LONG_SHIFT_CHECK_CRON || '*/15 * * * *';
 const SHIFT_START_REMINDER_MINUTES = Number(process.env.SHIFT_START_REMINDER_MINUTES || 30);
 const SCHEDULE_REMINDER_CRON = process.env.SCHEDULE_REMINDER_CRON || '*/5 * * * *';
+// Usernames (comma-separated, no @) who also get a last-call DM exactly 1
+// minute before each shift, on top of the normal heads-up.
+const LAST_CALL_USERNAMES = new Set(
+  (process.env.LAST_CALL_REMINDER_USERNAMES || 'Draco212')
+    .split(',')
+    .map((u) => u.trim().replace(/^@/, '').toLowerCase())
+    .filter(Boolean)
+);
 
 if (!BOT_TOKEN) {
   console.error('Missing BOT_TOKEN env var.');
@@ -735,6 +743,31 @@ async function checkScheduleReminders() {
   }
 }
 
+// Runs every minute (cron is minute-aligned, so a shift starting on the hour
+// is seen at HH-1:59 with ~1 min to go). The window is (0, 1.5] to tolerate
+// cron jitter; the DB claim ('start1') guarantees a single send per shift.
+async function checkLastCallReminders() {
+  if (LAST_CALL_USERNAMES.size === 0) return;
+  const now = new Date();
+  for (const occ of schedule.getBlockOccurrencesAround(now)) {
+    if (!occ.userId || !LAST_CALL_USERNAMES.has(occ.username.toLowerCase())) continue;
+    const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
+    if (startDeltaMin > 0 && startDeltaMin <= 1.5) {
+      const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start1');
+      if (!claimed) continue;
+      try {
+        await bot.telegram.sendMessage(
+          occ.userId,
+          `🚨 Your shift starts in <b>1 minute</b> — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. <code>/clockin</code> now!`,
+          HTML
+        );
+      } catch (e) {
+        console.error(`Failed to send last-call reminder to @${occ.username}`, e);
+      }
+    }
+  }
+}
+
 async function resumeActiveShifts() {
   const open = await db.getAllOpenShifts();
   for (const shift of open) {
@@ -843,6 +876,13 @@ async function main() {
   console.log(
     `Schedule reminders scheduled: "${SCHEDULE_REMINDER_CRON}" (${SHIFT_START_REMINDER_MINUTES}min heads-up + clock-out nudge)`
   );
+
+  if (LAST_CALL_USERNAMES.size > 0) {
+    cron.schedule('* * * * *', () => {
+      checkLastCallReminders().catch((e) => console.error('Last-call reminder check failed', e));
+    });
+    console.log(`Last-call (1 min) reminders enabled for: ${[...LAST_CALL_USERNAMES].join(', ')}`);
+  }
 
   await bot.telegram.setMyCommands([
     { command: 'clockin', description: 'Start your shift' },

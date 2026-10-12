@@ -149,6 +149,10 @@ to clock in once first) and nothing breaks if someone later renames their
   after their block ends — sent only if they're still clocked in at that
   point, so it stays quiet for anyone who already wrapped up on their own.
 
+- Optional **last-call** DM exactly 1 minute before a block starts, for
+  clippers listed in `LAST_CALL_REMINDER_USERNAMES` (default `Draco212`; set
+  empty to disable). Checked every minute, in addition to the heads-up above.
+
 A clipper still needs to have started a DM with the bot at least once for
 any of this to reach them — same requirement as the admin DM, Telegram bots
 can't message someone first.
