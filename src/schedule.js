@@ -8,9 +8,8 @@
 // CET), and keep ROSTER in sync with each person's Telegram @username and
 // numeric user ID.
 //
-// "Vacant" is an unfilled slot: it has no username/userId, so it shows up in
-// /schedule and /whosonshift but never gets reminders or "not clocked in"
-// warnings. Fill it by giving it a real username + userId (and renaming it).
+// An entry with userId: null (currently nkjk1) shows up in /schedule and
+// /whosonshift but gets no DM reminders until its numeric userId is filled in.
 //
 // userId is stored directly here (not resolved from shift history at
 // runtime) so reminders work even for someone who hasn't clocked in yet,
@@ -21,7 +20,7 @@ const ROSTER = {
   Draco: { username: 'Draco212', userId: 7064498111 },
   Manger: { username: 'Mangerhom', userId: 1642743726 },
   Bla: { username: 'bla2k', userId: 5996362594 },
-  Vacant: { username: null, userId: null },
+  nkjk1: { username: 'nkjk1', userId: null }, // TODO: add numeric userId (reminders need it)
   CTC: { username: 'ketolanossi', userId: 8953994254 },
 };
 
@@ -31,7 +30,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
@@ -39,7 +38,7 @@ const WEEK1 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
@@ -47,7 +46,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Vacant": [4, 5, 6, 7, 8, 9],
+    "nkjk1": [4, 5, 6, 7, 8, 9],
     "CTC": []
   },
   "Thursday": {
@@ -55,7 +54,7 @@ const WEEK1 = {
     "Draco": [16, 17, 18, 19, 20, 21],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
@@ -63,7 +62,7 @@ const WEEK1 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
@@ -71,7 +70,7 @@ const WEEK1 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
-    "Vacant": [4, 5, 6, 7, 8, 9],
+    "nkjk1": [4, 5, 6, 7, 8, 9],
     "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
@@ -79,7 +78,7 @@ const WEEK1 = {
     "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
     "Manger": [],
     "Bla": [16, 17],
-    "Vacant": [0, 1, 2, 3, 4, 5, 6, 7],
+    "nkjk1": [0, 1, 2, 3, 4, 5, 6, 7],
     "CTC": []
   }
 };
@@ -90,7 +89,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Tuesday": {
@@ -98,7 +97,7 @@ const WEEK2 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [22, 23],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Wednesday": {
@@ -106,7 +105,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Vacant": [4, 5, 6, 7, 8, 9],
+    "nkjk1": [4, 5, 6, 7, 8, 9],
     "CTC": []
   },
   "Thursday": {
@@ -114,7 +113,7 @@ const WEEK2 = {
     "Draco": [16, 17, 18, 19, 20, 21],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3, 22, 23],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Friday": {
@@ -122,7 +121,7 @@ const WEEK2 = {
     "Draco": [22, 23],
     "Manger": [10, 11, 12, 13, 14, 15],
     "Bla": [0, 1, 2, 3],
-    "Vacant": [],
+    "nkjk1": [],
     "CTC": [4, 5, 6, 7, 8, 9]
   },
   "Saturday": {
@@ -130,7 +129,7 @@ const WEEK2 = {
     "Draco": [0, 1, 2, 3],
     "Manger": [],
     "Bla": [10, 11, 12, 13, 14, 15],
-    "Vacant": [4, 5, 6, 7, 8, 9],
+    "nkjk1": [4, 5, 6, 7, 8, 9],
     "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
   },
   "Sunday": {
@@ -138,7 +137,7 @@ const WEEK2 = {
     "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
     "Manger": [],
     "Bla": [16, 17],
-    "Vacant": [0, 1, 2, 3, 4, 5, 6, 7],
+    "nkjk1": [0, 1, 2, 3, 4, 5, 6, 7],
     "CTC": []
   }
 };

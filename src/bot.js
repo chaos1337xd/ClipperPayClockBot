@@ -241,6 +241,7 @@ bot.command('status', async (ctx) => {
 bot.command('whosonshift', async (ctx) => {
   const open = await db.getAllOpenShifts();
   const openByUserId = new Map(open.map((s) => [s.user_id, s]));
+  const openUsernames = new Set(open.map((s) => (s.username || '').toLowerCase()));
 
   const lines = [];
   if (open.length === 0) {
@@ -262,7 +263,9 @@ bot.command('whosonshift', async (ctx) => {
         lines.push('🕳 Vacant');
         continue;
       }
-      const isOn = openByUserId.has(entry.userId);
+      const isOn = entry.userId
+        ? openByUserId.has(entry.userId)
+        : openUsernames.has(entry.username.toLowerCase());
       lines.push(`${isOn ? '✅' : '⚠️'} @${escapeHtml(entry.username)}${isOn ? '' : ' — not clocked in'}`);
     }
   }
@@ -283,7 +286,7 @@ async function replyWithSchedule(ctx, date, titlePrefix) {
   }
   const lines = entries.map((e) => {
     const nextDay = e.endHour > 24 ? ' (+1d)' : '';
-    return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · ${e.username ? '@' + escapeHtml(e.username) : 'Vacant'}`;
+    return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · ${'@' + escapeHtml(e.username)}`;
   });
   await ctx.reply(`<b>${titlePrefix} — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
 }
