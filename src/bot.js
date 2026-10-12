@@ -743,29 +743,49 @@ async function checkScheduleReminders() {
   }
 }
 
-// Runs every minute (cron is minute-aligned, so a shift starting on the hour
-// is seen at HH-1:59 with ~1 min to go). The window is (0, 1.5] to tolerate
-// cron jitter; the DB claim ('start1') guarantees a single send per shift.
-async function checkLastCallReminders() {
+// Event-driven rather than polled: sleeps until 1 minute before the next
+// block start of a last-call user, sends, then re-arms for the following one.
+// The DB claim ('start1') still guards against a duplicate send across
+// restarts; lastHandledStart stops a re-arm from picking the same block again.
+const LAST_CALL_LEAD_MS = 60 * 1000;
+let lastHandledStart = 0;
+
+function scheduleNextLastCall() {
   if (LAST_CALL_USERNAMES.size === 0) return;
-  const now = new Date();
-  for (const occ of schedule.getBlockOccurrencesAround(now)) {
-    if (!occ.userId || !LAST_CALL_USERNAMES.has(occ.username.toLowerCase())) continue;
-    const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
-    if (startDeltaMin > 0 && startDeltaMin <= 1.5) {
-      const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start1');
-      if (!claimed) continue;
-      try {
+  const now = Date.now();
+  const next = schedule
+    .getBlockOccurrencesAround(new Date(now))
+    .filter(
+      (o) =>
+        o.userId &&
+        LAST_CALL_USERNAMES.has(o.username.toLowerCase()) &&
+        o.start.getTime() > now &&
+        o.start.getTime() > lastHandledStart
+    )
+    .sort((x, y) => x.start - y.start)[0];
+
+  // Nothing in the 3-day lookahead (or the roster changed) — look again later.
+  if (!next) {
+    setTimeout(scheduleNextLastCall, 6 * 60 * 60 * 1000);
+    return;
+  }
+
+  const delay = Math.max(0, next.start.getTime() - LAST_CALL_LEAD_MS - now);
+  setTimeout(async () => {
+    lastHandledStart = next.start.getTime();
+    try {
+      if (await db.claimScheduleReminder(next.username, next.start, 'start1')) {
         await bot.telegram.sendMessage(
-          occ.userId,
-          `🚨 Your shift starts in <b>1 minute</b> — <b>${padHour(occ.startHour)}–${padHour(occ.endHour)} CET</b>. <code>/clockin</code> now!`,
+          next.userId,
+          `🚨 Your shift starts in <b>1 minute</b> — <b>${padHour(next.startHour)}–${padHour(next.endHour)} CET</b>. <code>/clockin</code> now!`,
           HTML
         );
-      } catch (e) {
-        console.error(`Failed to send last-call reminder to @${occ.username}`, e);
       }
+    } catch (e) {
+      console.error(`Failed to send last-call reminder to @${next.username}`, e);
     }
-  }
+    scheduleNextLastCall();
+  }, delay);
 }
 
 async function resumeActiveShifts() {
@@ -878,9 +898,7 @@ async function main() {
   );
 
   if (LAST_CALL_USERNAMES.size > 0) {
-    cron.schedule('* * * * *', () => {
-      checkLastCallReminders().catch((e) => console.error('Last-call reminder check failed', e));
-    });
+    scheduleNextLastCall();
     console.log(`Last-call (1 min) reminders enabled for: ${[...LAST_CALL_USERNAMES].join(', ')}`);
   }
 
