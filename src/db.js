@@ -326,6 +326,16 @@ async function getOpenShiftByUsername(username) {
   return rows[0] || null;
 }
 
+// Most recent user_id seen for a username (from shift history). Fallback for
+// roster entries whose userId isn't hardcoded; null if they never clocked in.
+async function getUserIdByUsername(username) {
+  const { rows } = await pool.query(
+    `SELECT user_id FROM shifts WHERE lower(username) = lower($1) ORDER BY clock_in DESC LIMIT 1`,
+    [username]
+  );
+  return rows[0] ? Number(rows[0].user_id) : null;
+}
+
 // Atomically claims a (username, occurrence, type) reminder slot — returns
 // true if this call is the one that gets to send it, false if it was
 // already sent (by an earlier tick or a prior process, including across a
@@ -532,6 +542,7 @@ module.exports = {
   getOpenShiftByUsername,
   getMostRecentShiftByUsername,
   claimScheduleReminder,
+  getUserIdByUsername,
   updateOpenShiftsChatId,
   getUserShiftHistory,
   getLastCheckinSentAt,

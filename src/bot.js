@@ -708,7 +708,10 @@ async function checkScheduleReminders() {
   const occurrences = schedule.getBlockOccurrencesAround(now);
 
   for (const occ of occurrences) {
-    if (!occ.userId) continue; // vacant slot — nobody to remind
+    // Roster entries without a hardcoded userId fall back to the ID from
+    // their shift history; if they've never clocked in there's nobody to DM.
+    if (!occ.userId) occ.userId = await db.getUserIdByUsername(occ.username);
+    if (!occ.userId) continue;
     const startDeltaMin = (occ.start.getTime() - now.getTime()) / 60000;
     if (startDeltaMin <= SHIFT_START_REMINDER_MINUTES && startDeltaMin > SHIFT_START_REMINDER_MINUTES - 6) {
       const claimed = await db.claimScheduleReminder(occ.username, occ.start, 'start');
