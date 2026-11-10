@@ -98,14 +98,6 @@ async function findAnyShiftForTarget(target) {
   return null;
 }
 
-// Everyone on the main rota (vacant slots have no id). While an event is
-// live, only these people may use the regular /clockin.
-const rosterUserIds = new Set(
-  Object.values(schedule.ROSTER)
-    .map((p) => p.userId)
-    .filter(Boolean)
-);
-
 function isAdmin(ctx) {
   return Boolean(ADMIN_ID) && ctx.from.id === ADMIN_ID;
 }
@@ -131,7 +123,7 @@ bot.command('clockin', async (ctx) => {
   }
   // While an event is live the regular clock-in is roster-only; anyone else
   // is an extra and has their own flow (and their hours go in their own table).
-  if (!rosterUserIds.has(userId) && (await db.getActiveEvent())) {
+  if (!schedule.isRosterUser(userId, ctx.from.username) && (await db.getActiveEvent())) {
     return ctx.reply("An event is live and /clockin is for the main roster only — if you're an extra, use /extraclockin.");
   }
   let shift;
@@ -280,15 +272,15 @@ async function replyWithSchedule(ctx, date, titlePrefix) {
     const link = botUsername ? ` (@${botUsername})` : '';
     return ctx.reply(`Run this one in DM, not here — it @mentions the whole roster. Message me${link} privately.`);
   }
-  const { dayName, weekParity, entries } = schedule.getScheduleForCetDate(date);
+  const { dayName, entries } = schedule.getScheduleForCetDate(date);
   if (entries.length === 0) {
-    return ctx.reply(`No one scheduled for <b>${dayName}</b> (week ${weekParity}). Times are CET.`, HTML);
+    return ctx.reply(`No one scheduled for <b>${dayName}</b>. Times are CET.`, HTML);
   }
   const lines = entries.map((e) => {
     const nextDay = e.endHour > 24 ? ' (+1d)' : '';
     return `${padHour(e.startHour)}–${padHour(e.endHour)}${nextDay} · ${'@' + escapeHtml(e.username)}`;
   });
-  await ctx.reply(`<b>${titlePrefix} — ${dayName} (week ${weekParity}) · CET</b>\n${lines.join('\n')}`, HTML);
+  await ctx.reply(`<b>${titlePrefix} — ${dayName} · CET</b>\n${lines.join('\n')}`, HTML);
 }
 
 bot.command('schedule', (ctx) => replyWithSchedule(ctx, new Date(), 'Schedule'));
@@ -300,7 +292,7 @@ bot.command('tomorrow', (ctx) =>
 );
 
 bot.command('whensmynextshift', async (ctx) => {
-  const result = schedule.getNextShiftForUser(ctx.from.id);
+  const result = schedule.getNextShiftForUser(ctx.from.id, new Date(), ctx.from.username);
 
   if (result.status === 'none') {
     return ctx.reply("You're not on the roster, so there's no schedule for you.");
@@ -525,7 +517,7 @@ bot.command('extraclockin', async (ctx) => {
   }
   const userId = ctx.from.id;
 
-  if (rosterUserIds.has(userId)) {
+  if (schedule.isRosterUser(userId, ctx.from.username)) {
     return ctx.reply("You're on the main roster — use /clockin for your normal shift.");
   }
   if (await db.getOpenShift(userId)) {

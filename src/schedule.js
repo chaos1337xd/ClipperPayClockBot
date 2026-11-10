@@ -1,144 +1,73 @@
-// Static roster parsed from the "BJ clippers.xlsx" rota. Times are fixed
-// CET (UTC+1, no daylight saving) as labeled in the sheet. The rota
-// alternates between two blocks by ISO week parity: odd ISO week numbers
-// use WEEK1, even use WEEK2 ("Week 1 (odd)" per the sheet).
+// Weekly roster from "Clipping new_temp.xlsx". Times are fixed CET (UTC+1,
+// no daylight saving). Each row lists the hours when a clipper is scheduled.
 //
-// To update the roster: re-export the sheet's hour flags per day/person
-// into WEEK1/WEEK2 below (nickname -> array of scheduled hours, 0-23,
-// CET), and keep ROSTER in sync with each person's Telegram @username and
-// numeric user ID.
-//
-// An entry with userId: null (currently nkjk1) shows up in /schedule and
-// /whosonshift but gets no DM reminders until its numeric userId is filled in.
-//
-// userId is stored directly here (not resolved from shift history at
-// runtime) so reminders work even for someone who hasn't clocked in yet,
-// and keep working if they later rename their @username — get a fresh ID
-// from https://t.me/userinfobot if someone new joins the roster.
+// Set a numeric Telegram ID when known. For reminder delivery, the bot can
+// look up a missing ID by username in shift history.
 const ROSTER = {
   Adko: { username: 'Adko04', userId: 1632388627 },
   Draco: { username: 'Draco212', userId: 7064498111 },
   Manger: { username: 'Mangerhom', userId: 1642743726 },
   Bla: { username: 'bla2k', userId: 5996362594 },
-  nkjk1: { username: 'nkjk1', userId: null }, // TODO: add numeric userId (reminders need it)
-  CTC: { username: 'ketolanossi', userId: 8953994254 },
+  Karhu: { username: 'karhu38', userId: null },
+  Nkjk: { username: 'nkjk1', userId: null },
 };
 
-const WEEK1 = {
-  "Monday": {
-    "Adko": [0, 1, 2, 3, 16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
+const WEEKLY_SCHEDULE = {
+  Monday: {
+    Adko: [16, 17, 18, 19, 20, 21],
+    Draco: [22, 23],
+    Manger: [10, 11, 12, 13, 14, 15],
+    Bla: [0, 1, 2, 3],
+    Karhu: [4, 5, 6, 7, 8, 9],
+    Nkjk: [],
   },
-  "Tuesday": {
-    "Adko": [16, 17, 18, 19, 20, 21],
-    "Draco": [0, 1, 2, 3],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [22, 23],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
+  Tuesday: {
+    Adko: [19, 20, 21, 22, 23],
+    Draco: [0, 1, 2, 3],
+    Manger: [8, 9, 10, 11, 12],
+    Bla: [13, 14, 15, 16, 17, 18],
+    Karhu: [4, 5, 6, 7],
+    Nkjk: [],
   },
-  "Wednesday": {
-    "Adko": [16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3],
-    "nkjk1": [4, 5, 6, 7, 8, 9],
-    "CTC": []
+  Wednesday: {
+    Adko: [19, 20, 21, 22, 23],
+    Draco: [],
+    Manger: [6, 7, 8, 9, 10, 11],
+    Bla: [12, 13, 14, 15, 16, 17, 18],
+    Karhu: [],
+    Nkjk: [0, 1, 2, 3, 4, 5],
   },
-  "Thursday": {
-    "Adko": [],
-    "Draco": [16, 17, 18, 19, 20, 21],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3, 22, 23],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
+  Thursday: {
+    Adko: [],
+    Draco: [18, 19, 20, 21, 22, 23],
+    Manger: [6, 7, 8, 9, 10, 11],
+    Bla: [12, 13, 14, 15, 16, 17],
+    Karhu: [],
+    Nkjk: [0, 1, 2, 3, 4, 5],
   },
-  "Friday": {
-    "Adko": [0, 1, 2, 3, 16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
+  Friday: {
+    Adko: [18, 19, 20, 21, 22, 23],
+    Draco: [],
+    Manger: [10, 11, 12, 13, 14, 15],
+    Bla: [16, 17],
+    Karhu: [4, 5, 6, 7, 8, 9],
+    Nkjk: [0, 1, 2, 3],
   },
-  "Saturday": {
-    "Adko": [],
-    "Draco": [0, 1, 2, 3],
-    "Manger": [],
-    "Bla": [10, 11, 12, 13, 14, 15],
-    "nkjk1": [4, 5, 6, 7, 8, 9],
-    "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
+  Saturday: {
+    Adko: [12, 13],
+    Draco: [16, 17, 18, 19, 20, 21, 22, 23],
+    Manger: [],
+    Bla: [],
+    Karhu: [6, 7, 8, 9, 10, 11],
+    Nkjk: [0, 1, 2, 3, 4, 5, 14, 15],
   },
-  "Sunday": {
-    "Adko": [22, 23],
-    "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
-    "Manger": [],
-    "Bla": [16, 17],
-    "nkjk1": [0, 1, 2, 3, 4, 5, 6, 7],
-    "CTC": []
-  }
-};
-
-const WEEK2 = {
-  "Monday": {
-    "Adko": [0, 1, 2, 3, 16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
-  },
-  "Tuesday": {
-    "Adko": [16, 17, 18, 19, 20, 21],
-    "Draco": [0, 1, 2, 3],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [22, 23],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
-  },
-  "Wednesday": {
-    "Adko": [16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3],
-    "nkjk1": [4, 5, 6, 7, 8, 9],
-    "CTC": []
-  },
-  "Thursday": {
-    "Adko": [],
-    "Draco": [16, 17, 18, 19, 20, 21],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3, 22, 23],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
-  },
-  "Friday": {
-    "Adko": [16, 17, 18, 19, 20, 21],
-    "Draco": [22, 23],
-    "Manger": [10, 11, 12, 13, 14, 15],
-    "Bla": [0, 1, 2, 3],
-    "nkjk1": [],
-    "CTC": [4, 5, 6, 7, 8, 9]
-  },
-  "Saturday": {
-    "Adko": [],
-    "Draco": [0, 1, 2, 3],
-    "Manger": [],
-    "Bla": [10, 11, 12, 13, 14, 15],
-    "nkjk1": [4, 5, 6, 7, 8, 9],
-    "CTC": [16, 17, 18, 19, 20, 21, 22, 23]
-  },
-  "Sunday": {
-    "Adko": [22, 23],
-    "Draco": [8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21],
-    "Manger": [],
-    "Bla": [16, 17],
-    "nkjk1": [0, 1, 2, 3, 4, 5, 6, 7],
-    "CTC": []
+  Sunday: {
+    Adko: [18, 19, 20, 21],
+    Draco: [12, 13, 14, 15, 16, 17],
+    Manger: [],
+    Bla: [22, 23],
+    Karhu: [6, 7, 8, 9, 10, 11],
+    Nkjk: [0, 1, 2, 3, 4, 5],
   }
 };
 
@@ -165,15 +94,6 @@ function toBlocks(hours) {
   return blocks;
 }
 
-function isoWeekNumber(utcMs) {
-  const d = new Date(utcMs);
-  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
 // Fixed CET is UTC+1 year-round (no DST), so CET wall-clock fields for a
 // given instant are just that instant's UTC fields shifted by +1h.
 function cetPartsOf(date) {
@@ -198,8 +118,7 @@ function cetToUtcDate(year, month, day, hour) {
 function scheduleForCetDay(year, month, day) {
   const dayIdx = new Date(Date.UTC(year, month, day)).getUTCDay();
   const dayName = DAY_NAMES[dayIdx];
-  const week = isoWeekNumber(Date.UTC(year, month, day));
-  const weekData = (week % 2 === 1 ? WEEK1 : WEEK2)[dayName] || {};
+  const weekData = WEEKLY_SCHEDULE[dayName] || {};
 
   const entries = [];
   for (const [nickname, hours] of Object.entries(weekData)) {
@@ -218,16 +137,28 @@ function getScheduledNow(date = new Date()) {
   return scheduleForCetDay(year, month, day).filter((e) => hour >= e.startHour && hour < e.endHour);
 }
 
+// Prefer a known Telegram ID. For roster entries without one, compare the
+// username supplied by Telegram on the current update.
+function matchesRosterUser(person, userId, username) {
+  return person.userId
+    ? person.userId === userId
+    : Boolean(username) && person.username.toLowerCase() === username.toLowerCase();
+}
+
+function isRosterUser(userId, username) {
+  return Object.values(ROSTER).some((person) => matchesRosterUser(person, userId, username));
+}
+
 // For /whensmynextshift: either they're on shift right now
 // ({ status: 'now', entry }), their next upcoming block within the next 14
-// days — a full rotation, since the roster alternates weekly
+// days
 // ({ status: 'upcoming', start, end, ...entry }), or they're not on the
 // roster at all ({ status: 'none' }).
-function getNextShiftForUser(userId, from = new Date()) {
+function getNextShiftForUser(userId, from = new Date(), username) {
   const nowMs = from.getTime();
   const { year, month, day, hour } = cetPartsOf(from);
 
-  const todaysBlocks = scheduleForCetDay(year, month, day).filter((e) => e.userId === userId);
+  const todaysBlocks = scheduleForCetDay(year, month, day).filter((e) => matchesRosterUser(e, userId, username));
   const current = todaysBlocks.find((e) => hour >= e.startHour && hour < e.endHour);
   if (current) return { status: 'now', entry: current };
 
@@ -238,7 +169,7 @@ function getNextShiftForUser(userId, from = new Date()) {
     const dd = d.getUTCDate();
 
     const candidates = scheduleForCetDay(y, m, dd)
-      .filter((e) => e.userId === userId)
+      .filter((e) => matchesRosterUser(e, userId, username))
       .map((e) => ({ ...e, start: cetToUtcDate(y, m, dd, e.startHour), end: cetToUtcDate(y, m, dd, e.endHour) }))
       .filter((e) => e.start.getTime() > nowMs)
       .sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -259,7 +190,6 @@ function getNextShiftForUser(userId, from = new Date()) {
 function getScheduleForCetDate(date = new Date()) {
   const { year, month, day, dayIdx } = cetPartsOf(date);
   const dayName = DAY_NAMES[dayIdx];
-  const week = isoWeekNumber(Date.UTC(year, month, day));
 
   const tomorrow = new Date(Date.UTC(year, month, day + 1));
   const tomorrowEntries = scheduleForCetDay(tomorrow.getUTCFullYear(), tomorrow.getUTCMonth(), tomorrow.getUTCDate());
@@ -272,7 +202,7 @@ function getScheduleForCetDate(date = new Date()) {
     })
     .sort((a, b) => a.startHour - b.startHour);
 
-  return { dayName, weekParity: week % 2 === 1 ? 'odd' : 'even', entries };
+  return { dayName, entries };
 }
 
 // A person's block on one day can end exactly at midnight and pick back up
@@ -341,4 +271,5 @@ module.exports = {
   getBlockOccurrencesAround,
   getScheduleForCetDate,
   getNextShiftForUser,
+  isRosterUser,
 };

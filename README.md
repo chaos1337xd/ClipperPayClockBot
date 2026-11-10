@@ -130,13 +130,9 @@ to `/clockout`).
 
 [`src/schedule.js`](src/schedule.js) holds a static roster (`ROSTER`) parsed
 from the team's rota spreadsheet: fixed-CET (UTC+1, no DST) hourly slots per
-person, per day, alternating between two weekly blocks by ISO week parity
-(odd week number → WEEK1, even → WEEK2). Each roster entry carries both the
-person's `@username` and their numeric Telegram user ID directly — reminders
-DM the ID straight from the roster rather than looking it up from shift
-history, so a brand new roster addition gets reminders immediately (no need
-to clock in once first) and nothing breaks if someone later renames their
-`@username`. It powers:
+person, per day. The same rota repeats every week. Each roster entry carries a
+Telegram `@username` and, when known, a numeric user ID. If the ID is missing,
+standard reminders look it up by username in shift history. It powers:
 
 - `/whosonshift`'s "Scheduled now" section (who's supposed to be on, cross-
   referenced by user ID against who's actually clocked in).
@@ -171,7 +167,7 @@ display (shown as `22:00–04:00 (+1d)` instead of looking truncated at
 `22:00–24:00`).
 
 **To update the roster** when the spreadsheet changes: re-export each day's
-hour flags into `WEEK1`/`WEEK2` in `src/schedule.js` (nickname → array of
+hour flags into `WEEKLY_SCHEDULE` in `src/schedule.js` (nickname → array of
 scheduled hours, 0–23, CET). **For a new person**, add them to `ROSTER` with
 both their `@username` and numeric Telegram user ID (get the ID by having
 them message [@userinfobot](https://t.me/userinfobot)), then redeploy.
