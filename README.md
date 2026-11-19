@@ -7,7 +7,7 @@ owner.
 
 ## Commands
 
-- `/clockin` — start your shift. **Must be run in a private DM with the
+- `/clockin` — start your shift. Available only to people on the main rota. **Must be run in a private DM with the
   bot**, not the group — running it in the group just tells you to DM
   instead and does nothing else, since the shift's check-ins get sent to
   whichever chat you ran `/clockin` from.
@@ -45,11 +45,9 @@ their own tables (`events`, `extra_shifts`, `extra_checkins`), so they never
 show up in `/whosonshift` or the daily/weekly/monthly reports.
 
 1. Admin runs `/eventstart <name>`. Only one event can be live at a time.
-2. **While an event is live, the regular `/clockin` is roster-only.** Anyone
-   else who tries it is pointed at `/extraclockin`. Roster members who try
+2. **The regular `/clockin` is always roster-only.** Roster members who try
    `/extraclockin` are sent back to `/clockin`, and someone already on a main
-   shift is told to clock out first. (Normal `/clockin` opens back up for
-   everyone when the event ends.)
+   shift is told to clock out first.
 3. Extras DM the bot `/extraclockin`, and `/extraclockout` when done. The
    admin gets a DM on each clock-in/out.
 4. Extras get the **same status-check pings** as the main team (same

@@ -117,14 +117,12 @@ bot.command('clockin', async (ctx) => {
     return ctx.reply(`Clock in over DM, not here — message me${link} privately and run /clockin there.`);
   }
   const userId = ctx.from.id;
+  if (!schedule.isRosterUser(userId, ctx.from.username)) {
+    return ctx.reply("Only people on the main rota can use /clockin.");
+  }
   const existing = await db.getOpenShift(userId);
   if (existing) {
     return ctx.reply(`You're already clocked in (since <b>${fmtLocal(existing.clock_in)}</b>).`, HTML);
-  }
-  // While an event is live the regular clock-in is roster-only; anyone else
-  // is an extra and has their own flow (and their hours go in their own table).
-  if (!schedule.isRosterUser(userId, ctx.from.username) && (await db.getActiveEvent())) {
-    return ctx.reply("An event is live and /clockin is for the main roster only — if you're an extra, use /extraclockin.");
   }
   let shift;
   try {
