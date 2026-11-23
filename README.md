@@ -85,7 +85,7 @@ verified as answered in time).
 
 ## Bot lifecycle visibility
 
-The owner (`ADMIN_ID`) gets a DM whenever the bot comes online (🟢, with how
+The admins (`ADMIN_ID` and Bla, `@bla2k`) get a DM whenever the bot comes online (🟢, with how
 many active shifts it resumed) and whenever it crashes (🔴, with the error),
 via `uncaughtException`/`unhandledRejection` handlers — so an outage or a
 stuck restart shows up immediately instead of only being noticeable once
@@ -101,11 +101,11 @@ would show up as one via the DM above); it's now ridden out quietly instead.
 
 Once a day (`DAILY_REPORT_CRON`, default midnight in `TZ`) and once a week
 (`WEEKLY_REPORT_CRON`, default Monday midnight, covering the trailing 7 days),
-the bot DMs the owner (`ADMIN_ID`) a summary: hours worked, number of shifts,
+the bot DMs both admins (`ADMIN_ID` and Bla, `@bla2k`) a summary: hours worked, number of shifts,
 and confirmed vs. missed check-ins, per clipper. `/report` and `/weeklyreport`
 get the same thing on demand.
 
-**Note:** the owner (`ADMIN_ID`) must have started a DM with the bot at least
+**Note:** each admin must have started a DM with the bot at least
 once before it can message them — Telegram bots can't message a user first.
 
 ## Long-shift safety net
@@ -206,3 +206,5 @@ npm start
 Requires a reachable Postgres instance for `DATABASE_URL` (a local Postgres,
 or point it at your Railway Postgres plugin's public connection string for
 testing).
+
+Bla (`@bla2k`, Telegram ID `5996362594`) has admin command access and receives clock-in/out alerts, missed check-in alerts, long-shift warnings, reports, and bot status notifications alongside the configured owner. Shift alerts skip the admin whose own shift triggered them.

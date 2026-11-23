@@ -9,7 +9,7 @@ const { formatDuration, escapeHtml, nameTag } = require('./format');
 const HTML = { parse_mode: 'HTML' };
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : null;
+const admins = require('./admins');
 const DAILY_REPORT_CRON = process.env.DAILY_REPORT_CRON || '0 0 * * *';
 const WEEKLY_REPORT_CRON = process.env.WEEKLY_REPORT_CRON || '0 0 * * 1';
 const TZ = process.env.TZ || 'Europe/Stockholm';
@@ -29,9 +29,6 @@ const LAST_CALL_USERNAMES = new Set(
 if (!BOT_TOKEN) {
   console.error('Missing BOT_TOKEN env var.');
   process.exit(1);
-}
-if (!ADMIN_ID) {
-  console.warn('Warning: ADMIN_ID not set — reports and admin commands will have no recipient/authorized user.');
 }
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -99,16 +96,11 @@ async function findAnyShiftForTarget(target) {
 }
 
 function isAdmin(ctx) {
-  return Boolean(ADMIN_ID) && ctx.from.id === ADMIN_ID;
+  return admins.isAdmin(ctx.from.id);
 }
 
-async function notifyAdmin(text) {
-  if (!ADMIN_ID) return;
-  try {
-    await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
-  } catch (e) {
-    console.error('Failed to DM admin', e);
-  }
+async function notifyAdmin(text, excludeUserId) {
+  await admins.notifyAdmins(bot, text, excludeUserId);
 }
 
 bot.command('clockin', async (ctx) => {
@@ -144,9 +136,7 @@ bot.command('clockin', async (ctx) => {
     `✅ ${fromTag(ctx.from)} clocked in. Status checks every <b>${scheduler.CHECKIN_INTERVAL_MS / 60000}</b> min — tap the button when prompted.`,
     HTML
   );
-  if (userId !== ADMIN_ID) {
-    await notifyAdmin(`✅ ${fromTag(ctx.from)} clocked in (<b>${fmtLocal(shift.clock_in)}</b>).`);
-  }
+  await notifyAdmin(`✅ ${fromTag(ctx.from)} clocked in (<b>${fmtLocal(shift.clock_in)}</b>).`, userId);
 });
 
 bot.command('clockout', async (ctx) => {
@@ -160,13 +150,11 @@ bot.command('clockout', async (ctx) => {
   const closed = await db.closeShift(shift.id);
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
   await ctx.reply(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
-  if (userId !== ADMIN_ID) {
-    await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`);
-  }
+  await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, userId);
 });
 
 bot.command('checknow', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply('This command is admin-only.');
   }
   const target = resolveTargetFromArgsOrReply(ctx);
@@ -192,7 +180,7 @@ bot.command('checknow', async (ctx) => {
 });
 
 bot.command('forceclockout', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply('This command is admin-only.');
   }
   const target = resolveTargetFromArgsOrReply(ctx);
@@ -323,7 +311,7 @@ bot.command('myhistory', async (ctx) => {
 });
 
 bot.command('checkins', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply('This command is admin-only.');
   }
   const target = resolveTargetFromArgsOrReply(ctx);
@@ -346,7 +334,7 @@ bot.command('checkins', async (ctx) => {
 });
 
 bot.command('report', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply("This command is admin-only.");
   }
   const since = new Date();
@@ -356,7 +344,7 @@ bot.command('report', async (ctx) => {
 });
 
 bot.command('weeklyreport', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply("This command is admin-only.");
   }
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -365,7 +353,7 @@ bot.command('weeklyreport', async (ctx) => {
 });
 
 bot.command('monthlyreport', async (ctx) => {
-  if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) {
+  if (!isAdmin(ctx)) {
     return ctx.reply("This command is admin-only.");
   }
   // Rolling 30 days, same approach as the weekly report.
@@ -548,9 +536,7 @@ bot.command('extraclockin', async (ctx) => {
     `✅ ${fromTag(ctx.from)} clocked in for <b>${escapeHtml(event?.name ?? 'the event')}</b>. Status checks every <b>${scheduler.CHECKIN_INTERVAL_MS / 60000}</b> min — tap the button when prompted.`,
     HTML
   );
-  if (userId !== ADMIN_ID) {
-    await notifyAdmin(`🎪 ${fromTag(ctx.from)} clocked in as an extra (<b>${escapeHtml(event?.name ?? 'event')}</b>).`);
-  }
+  await notifyAdmin(`🎪 ${fromTag(ctx.from)} clocked in as an extra (<b>${escapeHtml(event?.name ?? 'event')}</b>).`, userId);
 });
 
 bot.command('extraclockout', async (ctx) => {
@@ -563,9 +549,7 @@ bot.command('extraclockout', async (ctx) => {
   if (!closed) return ctx.reply("You're not clocked in as an extra.");
   const seconds = (new Date(closed.clock_out) - new Date(closed.clock_in)) / 1000;
   await ctx.reply(`🛑 ${fromTag(ctx.from)} clocked out. Shift length: <b>${formatDuration(seconds)}</b>.`, HTML);
-  if (userId !== ADMIN_ID) {
-    await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out as an extra. Shift length: <b>${formatDuration(seconds)}</b>.`);
-  }
+  await notifyAdmin(`🛑 ${fromTag(ctx.from)} clocked out as an extra. Shift length: <b>${formatDuration(seconds)}</b>.`, userId);
 });
 
 bot.command('help', async (ctx) => {
@@ -580,18 +564,18 @@ bot.command('help', async (ctx) => {
       '<code>/tomorrow</code> — see tomorrow\'s roster',
       '<code>/whensmynextshift</code> — see how long until your next scheduled shift',
       '<code>/myhistory</code> — see your last 10 completed shifts',
-      ADMIN_ID ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
-      ADMIN_ID ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
-      ADMIN_ID ? '<code>/weeklyreport</code> — (admin) get an on-demand weekly report' : null,
-      ADMIN_ID ? '<code>/monthlyreport</code> — (admin) get the trailing-30-days report' : null,
-      ADMIN_ID ? '<code>/forceclockout @user</code> — (admin) clock someone out, reply to their message also works' : null,
-      ADMIN_ID ? '<code>/checknow @user</code> — (admin) send an immediate status check, reply to their message also works' : null,
+      isAdmin(ctx) ? '<code>/checkins [@user]</code> — (admin) see status-check timestamps for a shift' : null,
+      isAdmin(ctx) ? '<code>/report</code> — (admin) get an on-demand daily report' : null,
+      isAdmin(ctx) ? '<code>/weeklyreport</code> — (admin) get an on-demand weekly report' : null,
+      isAdmin(ctx) ? '<code>/monthlyreport</code> — (admin) get the trailing-30-days report' : null,
+      isAdmin(ctx) ? '<code>/forceclockout @user</code> — (admin) clock someone out, reply to their message also works' : null,
+      isAdmin(ctx) ? '<code>/checknow @user</code> — (admin) send an immediate status check, reply to their message also works' : null,
       '<code>/extraclockin</code> / <code>/extraclockout</code> — clock in/out as an extra during an event (DM)',
-      ADMIN_ID ? '<code>/eventstart &lt;name&gt;</code> — (admin) open an event so extras can clock in' : null,
-      ADMIN_ID ? '<code>/eventend</code> — (admin) end the event, clock out anyone left, show totals' : null,
-      ADMIN_ID ? '<code>/extras</code> — (admin) who\'s clocked in right now' : null,
-      ADMIN_ID ? '<code>/eventreport</code> — (admin) per-extra hours for the live/latest event' : null,
-      ADMIN_ID ? '<code>/extraforceclockout @user</code> — (admin) clock an extra out' : null,
+      isAdmin(ctx) ? '<code>/eventstart &lt;name&gt;</code> — (admin) open an event so extras can clock in' : null,
+      isAdmin(ctx) ? '<code>/eventend</code> — (admin) end the event, clock out anyone left, show totals' : null,
+      isAdmin(ctx) ? '<code>/extras</code> — (admin) who\'s clocked in right now' : null,
+      isAdmin(ctx) ? '<code>/eventreport</code> — (admin) per-extra hours for the live/latest event' : null,
+      isAdmin(ctx) ? '<code>/extraforceclockout @user</code> — (admin) clock an extra out' : null,
     ]
       .filter(Boolean)
       .join('\n'),
@@ -665,16 +649,13 @@ async function buildReportText(sinceIso, label) {
 }
 
 async function checkLongRunningShifts() {
-  if (!ADMIN_ID) return;
   const thresholdSeconds = MAX_SHIFT_HOURS * 60 * 60;
   const longShifts = await db.getLongRunningUnwarnedShifts(thresholdSeconds);
   for (const shift of longShifts) {
     const seconds = (Date.now() - new Date(shift.clock_in).getTime()) / 1000;
     try {
-      await bot.telegram.sendMessage(
-        ADMIN_ID,
-        `⚠️ ${nameTag(shift)} has been clocked in for <b>${formatDuration(seconds)}</b> (since ${fmtLocal(shift.clock_in)}) — might have forgotten to clock out.`,
-        HTML
+      await notifyAdmin(
+        `⚠️ ${nameTag(shift)} has been clocked in for <b>${formatDuration(seconds)}</b> (since ${fmtLocal(shift.clock_in)}) — might have forgotten to clock out.`
       );
     } catch (e) {
       console.error('Failed to send long-shift warning', e);
@@ -848,43 +829,41 @@ async function main() {
     console.warn('Could not fetch bot username via getMe()', e);
   }
 
-  if (ADMIN_ID) {
-    cron.schedule(
-      DAILY_REPORT_CRON,
-      async () => {
-        try {
-          const since = new Date();
-          since.setHours(0, 0, 0, 0);
-          const text = await buildReportText(since.toISOString(), 'Daily');
-          await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
-        } catch (e) {
-          console.error('Failed to send daily report', e);
-        }
-      },
-      { timezone: TZ }
-    );
-    console.log(`Daily report scheduled: "${DAILY_REPORT_CRON}" (${TZ})`);
+  cron.schedule(
+    DAILY_REPORT_CRON,
+    async () => {
+      try {
+        const since = new Date();
+        since.setHours(0, 0, 0, 0);
+        const text = await buildReportText(since.toISOString(), 'Daily');
+        await notifyAdmin(text);
+      } catch (e) {
+        console.error('Failed to send daily report', e);
+      }
+    },
+    { timezone: TZ }
+  );
+  console.log(`Daily report scheduled: "${DAILY_REPORT_CRON}" (${TZ})`);
 
-    cron.schedule(
-      WEEKLY_REPORT_CRON,
-      async () => {
-        try {
-          const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          const text = await buildReportText(since.toISOString(), 'Weekly');
-          await bot.telegram.sendMessage(ADMIN_ID, text, HTML);
-        } catch (e) {
-          console.error('Failed to send weekly report', e);
-        }
-      },
-      { timezone: TZ }
-    );
-    console.log(`Weekly report scheduled: "${WEEKLY_REPORT_CRON}" (${TZ})`);
+  cron.schedule(
+    WEEKLY_REPORT_CRON,
+    async () => {
+      try {
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const text = await buildReportText(since.toISOString(), 'Weekly');
+        await notifyAdmin(text);
+      } catch (e) {
+        console.error('Failed to send weekly report', e);
+      }
+    },
+    { timezone: TZ }
+  );
+  console.log(`Weekly report scheduled: "${WEEKLY_REPORT_CRON}" (${TZ})`);
 
-    cron.schedule(LONG_SHIFT_CHECK_CRON, () => {
-      checkLongRunningShifts().catch((e) => console.error('Long-shift check failed', e));
-    });
-    console.log(`Long-shift safety check scheduled: "${LONG_SHIFT_CHECK_CRON}" (threshold ${MAX_SHIFT_HOURS}h)`);
-  }
+  cron.schedule(LONG_SHIFT_CHECK_CRON, () => {
+    checkLongRunningShifts().catch((e) => console.error('Long-shift check failed', e));
+  });
+  console.log(`Long-shift safety check scheduled: "${LONG_SHIFT_CHECK_CRON}" (threshold ${MAX_SHIFT_HOURS}h)`);
 
   cron.schedule(SCHEDULE_REMINDER_CRON, () => {
     checkScheduleReminders().catch((e) => console.error('Schedule reminder check failed', e));

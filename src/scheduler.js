@@ -3,7 +3,7 @@ const { nameTag } = require('./format');
 
 const CHECKIN_INTERVAL_MS = Number(process.env.CHECKIN_INTERVAL_MINUTES || 30) * 60 * 1000;
 const CHECKIN_GRACE_MS = Number(process.env.CHECKIN_GRACE_MINUTES || 5) * 60 * 1000;
-const ADMIN_ID = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : null;
+const { notifyAdmins } = require('./admins');
 
 const HTML = { parse_mode: 'HTML' };
 
@@ -103,21 +103,11 @@ function scheduleExpiry(bot, shift, checkin, kind) {
         console.error('Failed to edit expired check-in message', checkin.id, e);
       }
 
-      // Check-ins mostly happen over DM rather than in the shared group,
-      // so a missed one is otherwise invisible to the admin until they go
-      // looking (a report, /checkins). Ping them in real time instead —
-      // skip if the admin is the one who missed their own.
-      if (ADMIN_ID && shift.user_id !== ADMIN_ID) {
-        try {
-          await bot.telegram.sendMessage(
-            ADMIN_ID,
-            `⚠️ ${nameTag(shift)} missed a status check${k.adminLabel}.`,
-            HTML
-          );
-        } catch (e) {
-          console.error('Failed to notify admin of missed check-in', checkin.id, e);
-        }
-      }
+      await notifyAdmins(
+        bot,
+        `⚠️ ${nameTag(shift)} missed a status check${k.adminLabel}.`,
+        shift.user_id
+      );
     }
   }, CHECKIN_GRACE_MS);
 
